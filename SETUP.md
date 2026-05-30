@@ -31,7 +31,21 @@ Where to get them is written step-by-step in **`.env.example`** and
 **`WHOOP_SETUP.md`** (both ship with the repo). After adding the keys,
 hit **Redeploy** in Vercel.
 
-> No Supabase, no database, no other keys needed.
+## 4. (Optional) Creator follower auto-refresh
+On the **Creator** page, the ↻ button auto-pulls follower counts:
+- **TikTok** — works with **no key at all** (reads your public profile). Just type your handle.
+- **YouTube** — add one optional key, then ↻ pulls subs/views. Get a free key at
+  [Google Cloud Console](https://console.cloud.google.com) → enable **YouTube Data API v3**,
+  then in Vercel → Settings → Environment Variables add `YOUTUBE_API_KEY` and Redeploy.
+- **Instagram** — manual entry (its API needs per-user login).
+
+> No Supabase, no database needed. Every API key above is optional — the dashboard works fully without them.
+
+## 5. Install it on your phone (it's a real app)
+Open your Vercel link on your phone:
+- **iPhone:** Safari → Share → **Add to Home Screen**
+- **Android:** Chrome → **Install app** prompt
+It launches full-screen with its own icon — no browser bars.
 
 ---
 
