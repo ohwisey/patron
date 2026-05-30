@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="theme-color" content="#0C0C12" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Patron" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<link rel="icon" type="image/svg+xml" href="icon.svg" />
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
+<style id="pwa-mobile">
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{overflow-x:hidden;-webkit-tap-highlight-color:transparent}
+img{max-width:100%;height:auto}
+@media (max-width:480px){input,select,textarea{font-size:16px !important}}
+@supports (padding:max(0px)){body{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}}
+</style>
+<title>Peak · standalone</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<script>try{document.documentElement.setAttribute("data-theme",localStorage.getItem("patron_theme")||"nocturne");}catch(e){document.documentElement.setAttribute("data-theme","nocturne");}</script>
+<style>
+/* ============================================================
+ * Peak — standalone artifact (Patron).
+ * Daily-state view: mood check-in, hour-by-hour energy curve
+ * (line / bars / stack + hover scrub), today's plan + NL composer,
+ * now-running, schedule, score factor breakdown + "how to raise it".
+ * Vanilla CSS+JS, own localStorage. Fully interactive demo data —
+ * the hosted Patron module fills these from your real signals.
+ * ============================================================ */
+:root{
+  color-scheme:dark;
+  --bg:#0C0C12;--bg-elevated:#15151F;
+  --surface:rgba(255,255,255,0.028);--surface-2:rgba(255,255,255,0.055);
+  --fg:#F3F2F8;--muted:rgba(243,242,248,.50);--muted-strong:rgba(243,242,248,.74);
+  --border:rgba(255,255,255,.08);--border-strong:rgba(255,255,255,.17);
+  --brand:#8B7CFF;--brand-2:#C7BBFF;--brand-ink:#130E2E;--brand-soft:rgba(139,124,255,.12);--brand-line:rgba(139,124,255,.28);--brand-glow:rgba(139,124,255,.42);
+  --pos:#46E0A8;--neg:#FB7185;--warn:#FBBF24;
+  --card:var(--surface);--card-elevated:var(--surface-2);
+  --radius-md:11px;--radius-lg:18px;--radius-pill:999px;
+  --ease:cubic-bezier(.2,.8,.2,1);--ease-premium:cubic-bezier(.16,1,.3,1);--duration:200ms;
+  --font-inter:'Hanken Grotesk';--font-serif:'Space Grotesk';--font-mono:'JetBrains Mono';
+}
+[data-theme="aurora"]{color-scheme:dark;--bg:#080913;--bg-elevated:#12131F;--surface:rgba(150,160,255,.045);--surface-2:rgba(150,160,255,.08);--fg:#EEF0FF;--muted:rgba(220,225,255,.52);--muted-strong:rgba(220,225,255,.76);--border:rgba(150,160,255,.11);--border-strong:rgba(150,160,255,.22);--brand:#8B7BFF;--brand-2:#B9ABFF;--brand-ink:#0A0922;--brand-soft:rgba(139,123,255,.15);--brand-line:rgba(139,123,255,.32);--brand-glow:rgba(124,107,255,.6);--pos:#4FE3D0;--neg:#FF6FA5;--warn:#FFC65C;}
+[data-theme="daylight"]{color-scheme:light;--bg:#F3F2FA;--bg-elevated:#FFFFFF;--surface:#FFFFFF;--surface-2:#FAF9FF;--fg:#171622;--muted:rgba(23,22,34,.52);--muted-strong:rgba(23,22,34,.72);--border:rgba(23,22,60,.10);--border-strong:rgba(23,22,60,.18);--brand:#6A45FF;--brand-2:#8E6BFF;--brand-ink:#FFFFFF;--brand-soft:rgba(106,69,255,.08);--brand-line:rgba(106,69,255,.24);--brand-glow:rgba(106,69,255,.28);--pos:#0E9E64;--neg:#E11D63;--warn:#B4690E;}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-inter),-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased}
+::selection{background:color-mix(in srgb,var(--brand) 30%,transparent)}
+.grain-overlay::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:1;opacity:.035;mix-blend-mode:overlay;background-image:url("data:image/svg+xml;utf8,<svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");background-size:200px 200px}
+.page{position:relative;min-height:100dvh;background:var(--bg);padding:32px 22px 80px;isolation:isolate}
+.page::before{content:'';position:absolute;inset:0;pointer-events:none;z-index:-1;background:radial-gradient(60% 40% at 78% 4%,color-mix(in srgb,var(--brand) 7%,transparent),transparent 70%),radial-gradient(50% 35% at 12% 96%,color-mix(in srgb,var(--brand) 4%,transparent),transparent 70%)}
+.shell{max-width:900px;margin:0 auto}
+
+/* header */
+.topbar{display:flex;align-items:center;gap:18px;margin-bottom:28px}
+.back{display:inline-flex;align-items:center;gap:8px;align-self:flex-start;padding:8px 15px;background:color-mix(in srgb,var(--brand) 8%,transparent);border:1px solid color-mix(in srgb,var(--brand) 20%,transparent);border-radius:var(--radius-pill);color:var(--brand);font-family:var(--font-mono);font-size:11px;font-weight:500;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;transition:background var(--duration) var(--ease-premium),border-color var(--duration) var(--ease-premium)}
+.back:hover{background:color-mix(in srgb,var(--brand) 14%,transparent);border-color:color-mix(in srgb,var(--brand) 32%,transparent)}
+.htitle{font-family:var(--font-serif);font-size:30px;font-weight:600;line-height:1;letter-spacing:-.01em}
+.hsub{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin-top:7px}
+
+/* panel */
+.panel{border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card);padding:24px;margin-bottom:18px}
+.eyebrow{font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+
+/* mood */
+.mood h2{font-family:var(--font-serif);font-size:19px;font-weight:600;margin-bottom:16px}
+.moods{display:grid;grid-template-columns:repeat(5,1fr);gap:11px}
+.mood-btn{border:1px solid var(--border);border-radius:13px;background:var(--card-elevated);padding:18px 8px 13px;cursor:pointer;text-align:center;transition:border-color var(--duration),background var(--duration),transform .12s}
+.mood-btn:hover{transform:translateY(-2px);border-color:var(--border-strong)}
+.mood-btn .dot{width:14px;height:14px;border-radius:50%;margin:0 auto 13px;border:2px solid var(--c)}
+.mood-btn[data-fill="1"] .dot{background:var(--c)}
+.mood-btn span{font-size:13px;color:var(--fg)}
+.mood-btn.active{border-color:var(--c);background:color-mix(in srgb,var(--c) 10%,transparent)}
+.mood-btn.active span{font-weight:600}
+
+/* curve */
+.curve-head{display:flex;align-items:flex-start;gap:22px;margin-bottom:16px;flex-wrap:wrap}
+.ring-wrap{position:relative;width:108px;height:108px;flex:0 0 auto}
+.ring-wrap svg{transform:rotate(-90deg);overflow:visible}
+.ring-num{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--font-serif);font-size:36px;font-weight:600;font-variant-numeric:tabular-nums}
+.ring-meta .label{font-family:var(--font-serif);font-size:18px;font-weight:600}
+.ring-meta .now{font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-top:7px}
+.ring-meta .hint{font-size:12px;color:var(--muted);margin-top:10px;display:flex;align-items:center;gap:7px}
+.ring-meta .hint::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--muted)}
+.curve-copy{flex:1;min-width:190px}
+.curve-copy .eyebrow{margin-bottom:8px}
+.curve-copy p{font-size:14px;color:var(--muted-strong);line-height:1.5;max-width:340px}
+.toggle{display:inline-flex;border:1px solid var(--border);border-radius:var(--radius-pill);padding:3px;gap:2px;background:rgba(255,255,255,.02)}
+.toggle button{border:0;background:transparent;color:var(--muted);font-family:inherit;font-size:13px;font-weight:500;padding:7px 16px;border-radius:var(--radius-pill);cursor:pointer;transition:.18s}
+.toggle button.active{background:var(--brand);color:var(--brand-ink)}
+
+.chart{width:100%;height:auto;display:block}
+.chart text{font-family:var(--font-mono)}
+
+.plan-row{margin-top:4px}
+.plan-row .eyebrow{margin-bottom:13px}
+.chips{display:flex;gap:10px;flex-wrap:wrap}
+.chip{display:flex;align-items:stretch;border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--card-elevated)}
+.chip .bar{width:4px;background:var(--c,var(--muted))}
+.chip .body{padding:9px 14px}
+.chip .t{font-size:13px;font-weight:600}
+.chip .s{font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-top:3px}
+
+/* composer */
+.composer{border:1px solid var(--border-strong);border-radius:15px;overflow:hidden;margin-bottom:18px;background:var(--card)}
+.composer .row{display:flex;align-items:center;gap:12px;padding:16px 20px}
+.composer .caret{color:var(--brand);font-family:var(--font-mono);font-size:15px}
+.composer input{flex:1;background:transparent;border:0;outline:0;color:var(--fg);font-family:var(--font-mono);font-size:15px}
+.composer input::placeholder{color:var(--muted)}
+.composer .add{display:flex;align-items:center;gap:8px;color:var(--fg);font-family:var(--font-mono);font-size:13px;letter-spacing:.1em;cursor:pointer;background:transparent;border:0}
+.composer .add:hover{color:var(--brand)}
+.composer .meta{padding:11px 20px;border-top:1px solid var(--border);font-family:var(--font-mono);font-size:12px;color:var(--muted)}
+
+/* now + today */
+.grid2{display:grid;grid-template-columns:1.05fr 1fr;gap:24px;margin-bottom:18px}
+.now-block{padding-left:18px;border-left:2px solid var(--brand)}
+.now-block .tag{font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--brand);margin-bottom:13px;display:flex;align-items:center;gap:9px}
+.now-block .tag .pip{width:7px;height:7px;border-radius:2px;background:var(--brand);box-shadow:0 0 10px var(--brand-glow);animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.now-block h3{font-family:var(--font-serif);font-size:38px;font-weight:600;line-height:1.02;letter-spacing:-.01em}
+.now-block .time{color:var(--brand);font-family:var(--font-mono);font-size:16px;margin-top:13px;letter-spacing:.02em}
+.now-block .rule{height:1px;background:var(--border);margin:18px 0}
+.now-block .up{font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.now-block .upval{font-family:var(--font-mono);font-size:14px;color:var(--muted-strong);margin-top:8px}
+
+.today-head{font-family:var(--font-serif);font-size:22px;font-weight:600;margin-bottom:15px;display:flex;align-items:baseline;gap:10px}
+.today-head small{font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;color:var(--muted)}
+.sched{display:flex;flex-direction:column;gap:10px}
+.slot{display:flex;align-items:center;gap:16px;border:1px solid var(--border);border-radius:13px;padding:15px 18px;background:var(--card-elevated)}
+.slot .bar{width:3px;height:30px;border-radius:2px;background:var(--c,var(--muted))}
+.slot .tm{font-family:var(--font-mono);font-size:12px;color:var(--muted-strong);min-width:116px;letter-spacing:.02em}
+.slot .nm{font-size:15px;flex:1}
+.slot.now{border-color:color-mix(in srgb,var(--brand) 40%,transparent);background:color-mix(in srgb,var(--brand) 7%,transparent)}
+.slot .badge{font-family:var(--font-mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--brand-ink);background:var(--brand);padding:4px 9px;border-radius:var(--radius-pill);font-weight:700}
+
+/* ticker */
+.ticker{border-top:1px solid var(--border);border-bottom:1px solid var(--border);overflow:hidden;margin-bottom:18px}
+.ticker-track{display:flex;white-space:nowrap;animation:scroll 34s linear infinite;width:max-content}
+.ticker:hover .ticker-track{animation-play-state:paused}
+.tk{font-family:var(--font-mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase;padding:14px 0;color:var(--muted)}
+.tk b{color:var(--fg);font-weight:600}
+.tk.cur b{color:var(--brand-2)}
+.tk .sep{color:var(--muted);opacity:.5;margin:0 26px}
+@keyframes scroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+@media(prefers-reduced-motion:reduce){.ticker-track,.now-block .tag .pip{animation:none}}
+
+/* breakdown */
+.bd-head{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;margin-bottom:24px}
+.bd-head .eyebrow{margin-bottom:9px}
+.bd-head p{font-size:14px;color:var(--muted-strong)}
+.bd-score{font-family:var(--font-serif);font-size:30px;font-weight:600;text-align:right;white-space:nowrap}
+.bd-score b{color:var(--brand)}
+.bd-score small{font-size:16px;color:var(--muted);margin-left:6px;font-weight:500}
+.factor{margin-bottom:22px}
+.factor .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.factor .name{display:flex;align-items:center;gap:11px;font-size:15px}
+.factor .name .pip{width:8px;height:8px;border-radius:50%;background:var(--c,var(--muted))}
+.factor .name .sub{font-family:var(--font-mono);font-size:11px;color:var(--muted);background:rgba(255,255,255,.04);padding:2px 8px;border-radius:6px}
+.factor .pts{font-family:var(--font-mono);font-size:14px;color:var(--brand)}
+.track{height:6px;border-radius:var(--radius-pill);background:rgba(255,255,255,.06);position:relative;overflow:hidden}
+.track .fill{position:absolute;top:0;left:0;height:100%;border-radius:var(--radius-pill);background:var(--c,var(--brand));transition:width .5s var(--ease-premium)}
+
+.raise{border-top:1px solid var(--border);margin-top:4px;padding-top:22px}
+.raise>.eyebrow{margin-bottom:15px}
+.ritem{display:flex;align-items:flex-start;gap:15px;padding:13px 0;cursor:pointer;border-radius:10px;transition:background .15s}
+.ritem:hover{background:rgba(255,255,255,.02)}
+.rico{width:38px;height:38px;border-radius:10px;background:color-mix(in srgb,var(--brand) 10%,transparent);display:flex;align-items:center;justify-content:center;font-size:18px;flex:0 0 auto}
+.rbody{flex:1}
+.rbody .rt{display:flex;align-items:center;gap:10px;font-size:15px}
+.rbody .gain{font-family:var(--font-mono);font-size:11px;color:var(--brand);border:1px solid color-mix(in srgb,var(--brand) 30%,transparent);padding:2px 8px;border-radius:var(--radius-pill)}
+.rbody .rd{font-size:13px;color:var(--muted);margin-top:5px;line-height:1.45}
+.rtag{font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);align-self:center}
+
+@media(max-width:780px){
+  .curve-head{flex-direction:column;gap:16px}
+  .grid2{grid-template-columns:1fr}
+  .moods{gap:6px}.mood-btn span{font-size:11px}
+  .now-block h3{font-size:30px}.slot .tm{min-width:94px}
+}
+</style>
+</head>
+<body class="grain-overlay">
+<div class="page"><div class="shell">
+
+  <!-- HEADER -->
+  <div class="topbar">
+    <button class="back" onclick="history.back()">← Patron</button>
+    <div>
+      <div class="htitle">Peak</div>
+      <div class="hsub" id="dateLabel">—</div>
+    </div>
+  </div>
+
+  <!-- MOOD -->
+  <section class="panel mood">
+    <h2>How are you feeling?</h2>
+    <div class="moods" id="moods"></div>
+  </section>
+
+  <!-- ENERGY CURVE -->
+  <section class="panel">
+    <div class="curve-head">
+      <div class="ring-wrap">
+        <svg width="108" height="108" viewBox="0 0 108 108">
+          <circle cx="54" cy="54" r="45" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="6"/>
+          <circle id="ringFill" cx="54" cy="54" r="45" fill="none" stroke-width="6"
+                  stroke-linecap="round" stroke-dasharray="282.7" stroke-dashoffset="282.7"
+                  style="transition:stroke-dashoffset .5s var(--ease-premium)"/>
+        </svg>
+        <div class="ring-num" id="ringNum">—</div>
+      </div>
+      <div class="ring-meta">
+        <div class="label" id="ringLabel">—</div>
+        <div class="now" id="ringWhen">Right now</div>
+        <div class="hint">Hover the curve</div>
+      </div>
+      <div class="curve-copy">
+        <div class="eyebrow">Today’s energy curve</div>
+        <p>Your predicted score, hour by hour. Hover the curve to scrub.</p>
+      </div>
+      <div class="toggle" id="toggle">
+        <button data-mode="line" class="active">Line</button>
+        <button data-mode="bars">Bars</button>
+        <button data-mode="stack">Stack</button>
+      </div>
+    </div>
+
+    <svg class="chart" id="chart" viewBox="0 0 1000 400" preserveAspectRatio="none"></svg>
+
+    <div class="plan-row">
+      <div class="eyebrow">Today’s plan</div>
+      <div class="chips" id="chips"></div>
+    </div>
+  </section>
+
+  <!-- COMPOSER -->
+  <div class="composer">
+    <div class="row">
+      <span class="caret">&gt;</span>
+      <input id="composer" placeholder="e.g. deep work 9 to 11 hard, gym 1930, read 30m" autocomplete="off" />
+      <button class="add" id="addBtn">⏎ Add</button>
+    </div>
+    <div class="meta">task · time · difficulty</div>
+  </div>
+
+  <!-- NOW + TODAY -->
+  <div class="grid2">
+    <div class="now-block">
+      <div class="tag"><span class="pip"></span> Now · Running</div>
+      <h3 id="nowTitle">—</h3>
+      <div class="time" id="nowTime"></div>
+      <div class="rule"></div>
+      <div class="up">Up next</div>
+      <div class="upval" id="upNext">nothing scheduled</div>
+    </div>
+    <div>
+      <div class="today-head">Today <small id="schedCount">0 scheduled</small></div>
+      <div class="sched" id="sched"></div>
+    </div>
+  </div>
+
+  <!-- TICKER -->
+  <div class="ticker"><div class="ticker-track" id="ticker"></div></div>
+
+  <!-- BREAKDOWN -->
+  <section class="panel">
+    <div class="bd-head">
+      <div>
+        <div class="eyebrow" id="bdWhy">Why your score is —</div>
+        <p>Every point, accounted for. Tap a factor to see what’s driving it.</p>
+      </div>
+      <div class="bd-score"><b id="bdScore">—</b><small id="bdLabel"></small></div>
+    </div>
+    <div id="factors"></div>
+
+    <div class="raise">
+      <div class="eyebrow">How to raise it</div>
+      <div id="raise"></div>
+    </div>
+  </section>
+
+</div></div>
+
+<script>
+/* ============================================================
+   PEAK · standalone daily-state tracker (Patron dashboard)
+   Self-contained. Own data, own localStorage. No backend.
+   ============================================================ */
+const KEY = "patron.peak.v1";
+
+/* theme-aware accent colours, read from CSS tokens */
+const CSS = getComputedStyle(document.documentElement);
+const tok = (n,f)=> (CSS.getPropertyValue(n).trim() || f);
+const BRAND  = tok("--brand","#8B7CFF");
+const BRAND2 = tok("--brand-2","#C7BBFF");
+const WARN   = tok("--warn","#FBBF24");
+const NEG    = tok("--neg","#FB7185");
+const MUT    = tok("--muted","rgba(243,242,248,.5)");
+
+const MOODS = [
+  {id:"foggy",  label:"Foggy",  c:NEG,    fill:0, mult:0.82},
+  {id:"tired",  label:"Tired",  c:WARN,   fill:0, mult:0.91},
+  {id:"steady", label:"Steady", c:MUT,    fill:0, mult:1.00},
+  {id:"sharp",  label:"Sharp",  c:BRAND,  fill:0, mult:1.08},
+  {id:"peak",   label:"Peak",   c:BRAND2, fill:1, mult:1.16},
+];
+
+/* base circadian energy (0..100) per hour 0..24 */
+const BASE = [42,33,28,30,36,34,40,50,62,72,76,70,60,52,48,47,52,62,72,82,88,80,64,50,44];
+
+const DIFF_COLOR = {hard:NEG, medium:WARN, easy:BRAND};
+
+function seed(){
+  return {
+    mood:"steady", mode:"line",
+    tasks:[
+      {id:1, title:"make reel",     start:13, end:14, diff:"medium"},
+      {id:2, title:"workout",       start:14, end:16, diff:"hard"},
+      {id:3, title:"make yt video", start:17, end:21, diff:"easy"},
+    ],
+    factors:{
+      circadian:{label:"Circadian rhythm", sub:"", pts:50, max:50, color:BRAND},
+      recovery: {label:"Recovery", sub:"78%", pts:14, max:20, color:BRAND2},
+      sleep:    {label:"Sleep", sub:"9.2h", pts:4, max:10, color:BRAND2},
+      hydration:{label:"Hydration", sub:"0/8", pts:0, max:8, color:BRAND, glasses:0},
+    },
+    trainedBonus:false,
+  };
+}
+
+let S = load();
+function load(){ try{const r=JSON.parse(localStorage.getItem(KEY)); return r&&r.tasks?r:seed();}catch(e){return seed();} }
+function save(){ localStorage.setItem(KEY, JSON.stringify(S)); }
+
+const nowDate = new Date();
+const nowHour = nowDate.getHours() + nowDate.getMinutes()/60;
+
+function moodMult(){ return (MOODS.find(m=>m.id===S.mood)||MOODS[2]).mult; }
+
+/* Catmull-Rom so markers sit exactly on the drawn line */
+function valueAt(h){
+  h = Math.max(0, Math.min(24, h));
+  const i = Math.floor(h), t = h - i;
+  const p = (k)=> BASE[Math.max(0,Math.min(24,k))];
+  const p0=p(i-1), p1=p(i), p2=p(i+1), p3=p(i+2);
+  const v = 0.5*((2*p1)+(-p0+p2)*t+(2*p0-5*p1+4*p2-p3)*t*t+(-p0+3*p1-3*p2+p3)*t*t*t);
+  return Math.max(2, Math.min(100, v*moodMult()));
+}
+function scoreLabel(v){
+  if(v>=85)return"Peak"; if(v>=75)return"Sharp"; if(v>=60)return"Solid";
+  if(v>=45)return"Steady"; if(v>=30)return"Tired"; return"Foggy";
+}
+function totalScore(){ const f=S.factors; return Math.round(f.circadian.pts+f.recovery.pts+f.sleep.pts+f.hydration.pts); }
+function fmtHour(h){ h=((Math.round(h)%24)+24)%24; const ap=h<12?"AM":"PM"; let hh=h%12; if(hh===0)hh=12; return hh+" "+ap; }
+function fmtRange(a,b){ return fmtHour(a)+" – "+fmtHour(b); }
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
+
+/* ---------------- CHART ---------------- */
+const W=1000,H=400,PADX=14,TOP=24,BOT=58, PLOT=H-TOP-BOT;
+const X=h=>PADX+(h/24)*(W-2*PADX);
+const Y=v=>TOP+(1-v/100)*PLOT;
+let hoverHour=null;
+
+function buildChart(){
+  const m=S.mode; let s="";
+  [25,50,75].forEach(v=>{ s+=`<line x1="${PADX}" y1="${Y(v)}" x2="${W-PADX}" y2="${Y(v)}" stroke="rgba(255,255,255,.05)" stroke-dasharray="2 7"/>`; });
+
+  S.tasks.forEach(t=>{
+    const x1=X(t.start), x2=X(t.end), w=x2-x1;
+    s+=`<rect x="${x1}" y="${TOP}" width="${w}" height="${PLOT}" fill="${BRAND}" fill-opacity="0.06"/>`;
+    s+=`<line x1="${x1}" y1="${Y(valueAt((t.start+t.end)/2))-14}" x2="${x2}" y2="${Y(valueAt((t.start+t.end)/2))-14}" stroke="rgba(255,255,255,.16)"/>`;
+    if(w>52) s+=`<text x="${x1+12}" y="${TOP+PLOT-18}" fill="${MUT}" font-size="14">${esc(t.title)}</text>`;
+  });
+
+  const pts=[];
+  for(let h=0;h<=24;h+=0.1) pts.push([X(h),Y(valueAt(h))]);
+
+  if(m==="bars"){
+    for(let h=0;h<24;h++){ const bx=X(h+0.12), bw=X(h+0.88)-bx, by=Y(valueAt(h+0.5));
+      s+=`<rect x="${bx}" y="${by}" width="${bw}" height="${TOP+PLOT-by}" rx="3" fill="${BRAND}" fill-opacity="0.32"/>`; }
+  } else if(m==="stack"){
+    const base=pts.map(([x],i)=>[x,Y(valueAt(i*0.1)*0.55)]);
+    s+=`<path d="${areaPath(pts)}" fill="${BRAND}" fill-opacity="0.12"/>`;
+    s+=`<path d="${areaPath(base)}" fill="${BRAND2}" fill-opacity="0.16"/>`;
+    s+=`<polyline points="${pts.map(p=>p.join(",")).join(" ")}" fill="none" stroke="${BRAND}" stroke-width="2.5"/>`;
+    s+=`<polyline points="${base.map(p=>p.join(",")).join(" ")}" fill="none" stroke="${BRAND2}" stroke-opacity="0.7" stroke-width="1.5"/>`;
+  } else {
+    s+=`<defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="${BRAND}" stop-opacity="0.30"/><stop offset="1" stop-color="${BRAND}" stop-opacity="0"/></linearGradient></defs>`;
+    s+=`<path d="${areaPath(pts)}" fill="url(#area)"/>`;
+    s+=`<polyline points="${pts.map(p=>p.join(",")).join(" ")}" fill="none" stroke="${BRAND}" stroke-width="3" style="filter:drop-shadow(0 0 6px ${BRAND})"/>`;
+  }
+
+  s+=marker(nowHour,BRAND,false);
+  if(hoverHour!==null) s+=marker(hoverHour,BRAND2,true);
+
+  [[0,"12A"],[3,"3A"],[6,"6A"],[9,"9A"],[12,"12P"],[15,"3P"],[18,"6P"],[21,"9P"],[24,"12A"]].forEach(([h,l])=>{
+    s+=`<text x="${X(h)}" y="${H-26}" fill="${MUT}" font-size="13" text-anchor="${h===0?"start":h===24?"end":"middle"}">${l}</text>`; });
+  s+=`<line x1="${PADX}" y1="${TOP+PLOT}" x2="${W-PADX}" y2="${TOP+PLOT}" stroke="rgba(255,255,255,.1)"/>`;
+  document.getElementById("chart").innerHTML=s;
+}
+function areaPath(pts){ return `M ${pts[0][0]} ${TOP+PLOT} L `+pts.map(p=>p.join(" ")).join(" L ")+` L ${pts[pts.length-1][0]} ${TOP+PLOT} Z`; }
+function marker(h,col,dashed){
+  const x=X(h), y=Y(valueAt(h));
+  let s=`<line x1="${x}" y1="${TOP}" x2="${x}" y2="${TOP+PLOT}" stroke="${col}" stroke-opacity="${dashed?.5:.28}" stroke-dasharray="3 5"/>`;
+  s+=`<circle cx="${x}" cy="${y}" r="6" fill="${col}" style="filter:drop-shadow(0 0 7px ${col})"/>`;
+  s+=`<circle cx="${x}" cy="${y}" r="10" fill="none" stroke="${col}" stroke-opacity=".4"/>`;
+  return s;
+}
+
+const chartEl=document.getElementById("chart");
+chartEl.addEventListener("mousemove",e=>{
+  const r=chartEl.getBoundingClientRect();
+  hoverHour=Math.max(0,Math.min(24,((e.clientX-r.left)/r.width)*24));
+  buildChart(); updateRing();
+});
+chartEl.addEventListener("mouseleave",()=>{ hoverHour=null; buildChart(); updateRing(); });
+
+/* ---------------- RING ---------------- */
+function updateRing(){
+  const h = hoverHour!==null ? hoverHour : nowHour;
+  const v = Math.round(valueAt(h));
+  const C=2*Math.PI*45;
+  const rf=document.getElementById("ringFill");
+  rf.style.stroke=BRAND;
+  rf.style.filter=`drop-shadow(0 0 8px ${BRAND})`;
+  rf.style.strokeDashoffset = C*(1-v/100);
+  document.getElementById("ringNum").textContent=v;
+  document.getElementById("ringLabel").textContent=scoreLabel(v);
+  document.getElementById("ringWhen").textContent = hoverHour!==null ? fmtHour(h) : "Right now";
+}
+
+/* ---------------- MOOD ---------------- */
+function renderMoods(){
+  document.getElementById("moods").innerHTML = MOODS.map(m=>`
+    <button class="mood-btn ${S.mood===m.id?"active":""}" data-id="${m.id}" data-fill="${m.fill}" style="--c:${m.c}">
+      <div class="dot"></div><span>${m.label}</span></button>`).join("");
+  document.querySelectorAll(".mood-btn").forEach(b=>{
+    b.onclick=()=>{ S.mood=b.dataset.id; save(); renderMoods(); buildChart(); updateRing(); };
+  });
+}
+
+/* ---------------- PLAN / SCHEDULE / NOW ---------------- */
+function renderPlan(){
+  const sorted=[...S.tasks].sort((a,b)=>a.start-b.start);
+  document.getElementById("chips").innerHTML = sorted.map(t=>`
+    <div class="chip" style="--c:${DIFF_COLOR[t.diff]||MUT}">
+      <div class="bar"></div><div class="body"><div class="t">${esc(t.title)}</div><div class="s">${fmtRange(t.start,t.end)}</div></div>
+    </div>`).join("") || `<div class="chip"><div class="bar"></div><div class="body"><div class="s">nothing planned yet</div></div></div>`;
+
+  document.getElementById("schedCount").textContent=`${sorted.length} scheduled`;
+  const running=sorted.find(t=>nowHour>=t.start&&nowHour<t.end);
+  document.getElementById("sched").innerHTML = sorted.map(t=>{
+    const isNow=running&&t.id===running.id;
+    return `<div class="slot ${isNow?"now":""}" style="--c:${DIFF_COLOR[t.diff]||MUT}">
+        <div class="bar"></div><div class="tm">${fmtRange(t.start,t.end)}</div>
+        <div class="nm">${esc(t.title)}</div>${isNow?'<div class="badge">Now</div>':''}</div>`;
+  }).join("") || `<div class="slot"><div class="bar"></div><div class="nm" style="color:var(--muted)">nothing scheduled</div></div>`;
+
+  if(running){
+    document.getElementById("nowTitle").textContent=running.title;
+    document.getElementById("nowTime").textContent=fmtRange(running.start,running.end).replace("–","→");
+    const next=sorted.find(t=>t.start>=running.end);
+    document.getElementById("upNext").textContent = next?`${next.title} · ${fmtHour(next.start)}`:"nothing scheduled";
+  } else {
+    const next=sorted.find(t=>t.start>nowHour);
+    document.getElementById("nowTitle").textContent = next?"open window":"day’s done";
+    document.getElementById("nowTime").textContent = next?`free until ${fmtHour(next.start)}`:"";
+    document.getElementById("upNext").textContent = next?`${next.title} · ${fmtHour(next.start)}`:"nothing scheduled";
+  }
+}
+
+/* ---------------- BREAKDOWN + RAISE ---------------- */
+function renderBreakdown(){
+  const total=totalScore();
+  document.getElementById("bdWhy").textContent=`Why your score is ${total}`;
+  document.getElementById("bdScore").textContent=total;
+  document.getElementById("bdLabel").textContent=scoreLabel(total);
+
+  document.getElementById("factors").innerHTML=["circadian","recovery","sleep","hydration"].map(k=>{
+    const f=S.factors[k]; const pct=Math.max(0,Math.min(100,(f.pts/f.max)*100));
+    return `<div class="factor" style="--c:${f.color}">
+      <div class="top"><div class="name"><span class="pip"></span>${f.label}${f.sub?`<span class="sub">${f.sub}</span>`:""}</div>
+      <div class="pts">+${f.pts}</div></div>
+      <div class="track"><div class="fill" style="width:${pct}%"></div></div></div>`;
+  }).join("");
+
+  const tips=[]; const hy=S.factors.hydration;
+  tips.push({icon:"💧", title:"Drink water", gain:`+${hy.max-hy.pts}`, tag:"Hydration",
+    desc:`${hy.glasses}/8 logged. The cheapest, most reliable points on the board.`,
+    action:()=>{ if(hy.glasses<8){ hy.glasses++; hy.pts=hy.glasses; hy.sub=`${hy.glasses}/8`; save(); renderAll(); } }});
+  if(!S.trainedBonus){
+    tips.push({icon:"🏋", title:"Train in a peak window", gain:"+7", tag:"Training",
+      desc:"A session pegs your evening peak ~90 min later via BDNF + dopamine.",
+      action:()=>{ S.trainedBonus=true; const r=S.factors.recovery; r.pts=Math.min(r.max,r.pts+7); r.sub=Math.round(r.pts/r.max*100)+"%"; save(); renderAll(); }});
+  }
+  document.getElementById("raise").innerHTML=tips.map((t,i)=>`
+    <div class="ritem" data-i="${i}"><div class="rico">${t.icon}</div>
+      <div class="rbody"><div class="rt">${t.title} <span class="gain">${t.gain}</span></div><div class="rd">${t.desc}</div></div>
+      <div class="rtag">${t.tag}</div></div>`).join("") || `<div class="rd" style="color:var(--muted)">You’re maxed out for today. Nice.</div>`;
+  document.querySelectorAll(".ritem").forEach(el=>el.onclick=()=>tips[+el.dataset.i].action());
+}
+
+function renderTicker(){
+  const f=S.factors, total=totalScore();
+  const items=[
+    `Circadian rhythm <b>+${f.circadian.pts}</b>`,
+    `Recovery <b>+${f.recovery.pts}</b>`,
+    `Sleep <b>+${f.sleep.pts}</b>`,
+    `Hydration <b>+${f.hydration.pts}</b>`,
+  ].map(t=>`<span class="tk">${t}<span class="sep">/</span></span>`).join("")
+   +`<span class="tk cur">Today <b>${total} · ${scoreLabel(total)}</b><span class="sep">/</span></span>`;
+  document.getElementById("ticker").innerHTML=items+items;
+}
+
+/* ---------------- COMPOSER (natural language) ---------------- */
+function parseTask(raw){
+  let s=raw.trim(); if(!s)return null;
+  let diff="medium";
+  const dm=s.match(/\b(hard|heavy|tough|easy|light|chill|medium|moderate)\b/i);
+  if(dm){ const w=dm[1].toLowerCase();
+    diff = /hard|heavy|tough/.test(w)?"hard": /easy|light|chill/.test(w)?"easy":"medium";
+    s=s.replace(dm[0],"").trim(); }
+  let start=null,end=null;
+  const to=s.match(/(\d{1,2})(?::?(\d{2}))?\s*(?:to|-|–|until)\s*(\d{1,2})(?::?(\d{2}))?/i);
+  const dur=s.match(/(\d+)\s*(?:m|min|mins|minutes|h|hr|hrs|hours)\b/i);
+  const single=s.match(/\b(\d{3,4}|\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i);
+  if(to){
+    start=+to[1]+(to[2]?+to[2]/60:0); end=+to[3]+(to[4]?+to[4]/60:0);
+    if(end<=start && end<12) end+=12;
+    s=s.replace(to[0],"").trim();
+  } else if(single){
+    let h, mm=0; const raw1=single[1];
+    if(raw1.length>=3){ h=Math.floor(+raw1/100); mm=(+raw1%100)/60; }
+    else { h=+raw1; mm=single[2]?+single[2]/60:0; }
+    if(single[3]){ if(/pm/i.test(single[3])&&h<12)h+=12; if(/am/i.test(single[3])&&h===12)h=0; }
+    else if(h<8) h+=12;
+    start=h+mm;
+    let mins=60; if(dur){ const n=+dur[1]; mins=/h|hr|hour/i.test(dur[0])?n*60:n; }
+    end=start+mins/60;
+    s=s.replace(single[0],"").trim(); if(dur) s=s.replace(dur[0],"").trim();
+  } else if(dur){
+    const n=+dur[1]; const mins=/h|hr|hour/i.test(dur[0])?n*60:n;
+    start=Math.round(nowHour*2)/2; end=start+mins/60; s=s.replace(dur[0],"").trim();
+  } else { start=Math.round(nowHour*2)/2; end=start+1; }
+  start=Math.max(0,Math.min(23.5,start)); end=Math.max(start+0.25,Math.min(24,end));
+  const title=s.replace(/\s{2,}/g," ").replace(/^[,\s-]+|[,\s-]+$/g,"") || "untitled";
+  return {id:Date.now()+Math.floor(performance.now()), title, start, end, diff};
+}
+function addFromInput(){
+  const inp=document.getElementById("composer");
+  inp.value.split(",").map(p=>p.trim()).filter(Boolean).forEach(p=>{ const t=parseTask(p); if(t)S.tasks.push(t); });
+  inp.value=""; save(); renderAll();
+}
+document.getElementById("addBtn").onclick=addFromInput;
+document.getElementById("composer").addEventListener("keydown",e=>{ if(e.key==="Enter")addFromInput(); });
+
+document.getElementById("toggle").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b)return;
+  S.mode=b.dataset.mode; save();
+  document.querySelectorAll("#toggle button").forEach(x=>x.classList.toggle("active",x===b));
+  buildChart();
+});
+
+/* ---------------- BOOT ---------------- */
+function renderAll(){ renderPlan(); renderBreakdown(); renderTicker(); }
+function init(){
+  document.getElementById("dateLabel").textContent =
+    nowDate.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"}).toUpperCase();
+  renderMoods();
+  document.querySelectorAll("#toggle button").forEach(x=>x.classList.toggle("active",x.dataset.mode===S.mode));
+  buildChart(); updateRing(); renderAll();
+}
+init();
+</script>
+</body>
+</html>
