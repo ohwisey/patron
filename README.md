@@ -4,6 +4,14 @@ A suite of nine single-file apps tied together by one bento **hub** (`index.html
 one design system ("Patron" — soft-dark electric-violet), and one shared theme.
 Fork it, deploy it (or just open it), make it yours.
 
+### 🚀 Get your own copy live in one click
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/ohwisey/patron)
+
+Click the button → it copies this repo to your GitHub and deploys it automatically.
+No fork, no setup — you get a live `your-app.vercel.app` link in about a minute.
+(Optional API keys for fitness-band & creator sync: see **`SETUP.md`**.)
+
 | App | File | What it does |
 |---|---|---|
 | **Hub** | `index.html` | Bento launcher · onboarding · "Today's vitals" · live stats |
