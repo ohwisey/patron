@@ -59,9 +59,28 @@ window.PatronDB = (function () {
     return function () { try { sb.removeChannel(ch); } catch (_) {} };
   }
 
+  /* ---- image upload to Supabase Storage (for progress photos) ----
+   * Returns a public URL on success, or null (caller falls back to base64).
+   * This is the fix for "photos never stick": files go to a Storage bucket,
+   * and only the small URL is saved in app_state — never giant base64 blobs. */
+  async function uploadImage(bucket, path, dataUrl, contentType) {
+    if (!sb) return null;
+    try {
+      const blob = await (await fetch(dataUrl)).blob();
+      const { error } = await sb.storage.from(bucket).upload(path, blob, { contentType: contentType || 'image/jpeg', upsert: true });
+      if (error) return null;
+      const { data } = sb.storage.from(bucket).getPublicUrl(path);
+      return (data && data.publicUrl) ? data.publicUrl : null;
+    } catch (_) { return null; }
+  }
+  async function deleteImage(bucket, path) {
+    if (!sb || !path) return;
+    try { await sb.storage.from(bucket).remove([path]); } catch (_) {}
+  }
+
   /* ---- localStorage fallback helpers ---- */
   function _local(key) { try { return JSON.parse(localStorage.getItem('patron_db_' + key) || 'null'); } catch (_) { return null; } }
   function _saveLocal(key, v) { try { localStorage.setItem('patron_db_' + key, JSON.stringify(v)); } catch (_) {} }
 
-  return { isCloud, get, set, subscribe };
+  return { isCloud, get, set, subscribe, uploadImage, deleteImage };
 })();

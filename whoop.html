@@ -566,6 +566,20 @@ function clearWhoopData() {
   // Only clear the shared record if Whoop owns it — never wipe manually-entered vitals.
   try { const cur = JSON.parse(localStorage.getItem(HEALTH_KEY) || 'null'); if (cur && cur.source === 'whoop') localStorage.removeItem(HEALTH_KEY); } catch (e) {}
 }
+function publishFitbitData(d) {
+  const snap = {
+    source: 'fitbit', connected: true, ts: Date.now(),
+    recovery: d.recovery, hrv: d.hrv, rhr: d.rhr,
+    sleepPerf: d.sleepPerf, sleepHours: d.sleepHours,
+    sleepTargetHours: d.sleepTargetHours, strain: d.strain,
+    bedtime: d.bedtime, wakeTime: d.wakeTime, // Fitbit gives real bed/wake times → feeds Goals day-window
+    vitalityScore: d.vitalityScore,
+  };
+  try { localStorage.setItem(HEALTH_KEY, JSON.stringify(snap)); } catch (e) {}
+}
+function clearFitbitData() {
+  try { const cur = JSON.parse(localStorage.getItem(HEALTH_KEY) || 'null'); if (cur && cur.source === 'fitbit') localStorage.removeItem(HEALTH_KEY); } catch (e) {}
+}
 
 /* ---- Apple Health (manual entry, tagged Apple Watch) ----
  * Apple HealthKit has no web API — a browser can't read it directly — so the
@@ -627,6 +641,8 @@ function setConnected(v) {
  * LOCAL preview only, and is never published into the suite. */
 const ON_SERVER = location.protocol === 'http:' || location.protocol === 'https:';
 let liveData = null, liveConnected = false;
+let fitbitData = null, fitbitConnected = false; // parallel live path for Fitbit
+let activeKind = null; // which source is currently displayed: 'whoop-live' | 'fitbit-live' | 'apple' | 'sample'
 function isLive() { return !!liveData; }
 function isConnected() { return ON_SERVER ? liveConnected : connected; }
 function activeData() { return liveData || SAMPLE; }
@@ -658,6 +674,17 @@ async function syncWhoopLive() {
   } catch (e) { liveData = null; liveConnected = false; }
   syncing = false; render();
 }
+async function syncFitbitLive() {
+  if (!ON_SERVER) return;
+  syncing = true; render();
+  try {
+    const r = await fetch('/api/fitbit/data', { cache: 'no-store' });
+    const j = await r.json();
+    if (j && j.connected) { fitbitData = buildLiveData(j); fitbitData.bedtime = j.bedtime; fitbitData.wakeTime = j.wakeTime; fitbitConnected = true; }
+    else { fitbitData = null; fitbitConnected = false; }
+  } catch (e) { fitbitData = null; fitbitConnected = false; }
+  syncing = false; render();
+}
 
 /* ============================================================
  * VIEWS
@@ -673,7 +700,17 @@ function headerHtml(d) {
 
 function sourceTabsHtml() {
   const tab = (key, emoji, label) => '<button type="button" class="srcTab ' + (connectSource === key ? 'srcTabActive' : '') + '" data-action="src-tab" data-src="' + key + '"><span aria-hidden>' + emoji + '</span>' + label + '</button>';
-  return '<div class="srcSeg" role="tablist" aria-label="Data source">' + tab('whoop', '🔋', 'Whoop') + tab('apple', '⌚', 'Apple Health') + '</div>';
+  return '<div class="srcSeg" role="tablist" aria-label="Data source">' + tab('whoop', '🔋', 'Whoop') + tab('fitbit', '💠', 'Fitbit') + tab('apple', '⌚', 'Apple Health') + '</div>';
+}
+
+function fitbitConnectBodyHtml() {
+  const cta = ON_SERVER
+    ? '<a class="btn btn-primary connectCta" href="/api/fitbit/login">Connect Fitbit</a>'
+      + '<p class="setupNote"><strong>Setup note:</strong> needs your Fitbit API keys set on the host (see <em>FITBIT_SETUP.md</em>). Then this is a real one-tap sign-in — sleep, HRV, resting HR &amp; your bed/wake times sync automatically.</p>'
+    : '<p class="setupNote"><strong>Setup note:</strong> live Fitbit sync runs on the deployed app (Vercel) with your Fitbit keys. Opened locally, use <strong>Apple Health</strong> to enter numbers by hand.</p>';
+  return '<p class="connectIntro">Bring your <em>sleep</em>, <em>HRV</em>, and <em>resting HR</em> into Vitality. One tap. Sign in with Fitbit, allow access, you’re back here.</p>'
+    + '<p class="connectSub">We never see your Fitbit password. You can disconnect anytime. Fitbit has no recovery score, so that ring stays blank — everything else fills in.</p>'
+    + cta;
 }
 
 function appleFieldHtml(id, label, ph, val, attrs, full) {
@@ -713,10 +750,10 @@ function whoopConnectBodyHtml() {
 }
 
 function connectPanelHtml() {
-  return '<section class="connectPanel">'
-    + sourceTabsHtml()
-    + (connectSource === 'apple' ? appleFormHtml() : whoopConnectBodyHtml())
-    + '</section>';
+  const body = connectSource === 'apple' ? appleFormHtml()
+    : connectSource === 'fitbit' ? fitbitConnectBodyHtml()
+    : whoopConnectBodyHtml();
+  return '<section class="connectPanel">' + sourceTabsHtml() + body + '</section>';
 }
 
 function dataPanelHtml(d, kind) {
@@ -740,18 +777,23 @@ function dataPanelHtml(d, kind) {
 }
 
 function render() {
-  // Source priority: live Whoop > saved Apple Health > local sample preview.
+  // Source priority: live Whoop > live Fitbit > saved Apple Health > local sample preview.
   let d = null, kind = null;
   if (liveData) { d = liveData; kind = 'whoop-live'; }
+  else if (fitbitData) { d = fitbitData; kind = 'fitbit-live'; }
   else if (appleData && !editingApple) { d = buildLiveData(appleData); kind = 'apple'; }
   else if (!ON_SERVER && connected) { d = SAMPLE; kind = 'sample'; }
+  activeKind = kind;
 
-  if (liveData) publishWhoopData(liveData); // ONLY ever publish real Whoop data into the suite
+  // ONLY ever publish real live data into the suite — and only the active source.
+  if (kind === 'whoop-live') publishWhoopData(liveData);
+  else if (kind === 'fitbit-live') publishFitbitData(fitbitData);
 
   let html = headerHtml(d);
   if (d) {
     if (kind === 'sample') html += '<div class="sampleChip"><span class="tickerPulse" aria-hidden></span>Sample data · connect WHOOP for live numbers</div>';
     else if (kind === 'apple') html += '<div class="appleChip"><span class="tickerPulse" aria-hidden></span>Apple Health · entered manually</div>';
+    else if (kind === 'fitbit-live') html += '<div class="appleChip"><span class="tickerPulse" aria-hidden></span>Fitbit · live (no recovery score)</div>';
     html += tickerHtml(d);
     html += dataPanelHtml(d, kind);
   } else {
@@ -775,7 +817,9 @@ document.addEventListener('click', e => {
   if (action === 'remove-apple') { if (confirm('Remove your Apple Health readings from the suite?')) { clearApple(); editingApple = false; render(); } return; }
   if (action === 'connect') { setConnected(true); return; } // local sample preview only
   if (action === 'disconnect') {
-    if (ON_SERVER) {
+    if (activeKind === 'fitbit-live') {
+      fetch('/api/fitbit/logout').catch(() => {}).then(() => { fitbitConnected = false; fitbitData = null; clearFitbitData(); render(); });
+    } else if (ON_SERVER) {
       fetch('/api/whoop/logout').catch(() => {}).then(() => { liveConnected = false; liveData = null; clearWhoopData(); render(); });
     } else if (confirm('Disconnect Whoop? (Hides the sample preview in this standalone.)')) {
       setConnected(false);
@@ -783,7 +827,8 @@ document.addEventListener('click', e => {
     return;
   }
   if (action === 'sync') {
-    if (ON_SERVER) { syncWhoopLive(); }
+    if (activeKind === 'fitbit-live') { syncFitbitLive(); }
+    else if (ON_SERVER) { syncWhoopLive(); }
     else { syncing = true; render(); setTimeout(() => { syncing = false; render(); }, 900); }
     return;
   }
@@ -792,15 +837,21 @@ document.addEventListener('click', e => {
 loadApple();        // pick up any manually-entered Apple Watch readings
 applyTheme(currentTheme);
 
-// On a deployed host: pick up the OAuth return + pull live WHOOP data.
-(function bootWhoop(){
+// On a deployed host: pick up the OAuth return + pull live WHOOP / Fitbit data.
+(function bootLive(){
   if (!ON_SERVER) return;
   try {
     const q = new URLSearchParams(location.search);
-    const w = q.get('whoop');
-    if (w) { history.replaceState(null, '', location.pathname); if (w === 'error' || w === 'denied') alert('Whoop connection didn’t complete — check the host’s WHOOP keys & redirect URL (WHOOP_SETUP.md).'); }
+    const w = q.get('whoop'), f = q.get('fitbit');
+    if (w || f) {
+      history.replaceState(null, '', location.pathname);
+      if (w === 'error' || w === 'denied') alert('Whoop connection didn’t complete — check the host’s WHOOP keys & redirect URL (WHOOP_SETUP.md).');
+      if (f === 'error' || f === 'denied') alert('Fitbit connection didn’t complete — check the host’s FITBIT keys & redirect URL (FITBIT_SETUP.md).');
+      if (f === 'connected') connectSource = 'fitbit';
+    }
   } catch (e) {}
   syncWhoopLive();
+  syncFitbitLive();
 })();
 </script>
 </body>

@@ -236,6 +236,9 @@ body{background:var(--bg);color:var(--fg);font-family:var(--font-inter),-apple-s
 <main class="page grain-overlay"><div class="shell" id="app"></div></main>
 <div id="modalRoot"></div>
 <input id="fileInput" type="file" accept="image/*" class="hiddenInput" />
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="db.js"></script>
+<script src="cloud-sync.js"></script>
 <script>
 /* ===================== Helpers ===================== */
 function getLocalDateKey(d){d=d||new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
@@ -276,9 +279,9 @@ function seed(){
   return {units:'kg',entries:e};
 }
 function load(){try{const r=localStorage.getItem(LS);if(!r)return seed();const p=JSON.parse(r);return {units:p.units||'kg',entries:Array.isArray(p.entries)?p.entries:seed().entries};}catch{return seed();}}
-function save(){try{localStorage.setItem(LS,JSON.stringify({units:state.units,entries:state.entries}));}catch{}}
+function save(){try{localStorage.setItem(LS,JSON.stringify({units:state.units,entries:state.entries}));}catch{} if(window.PatronDB&&PatronDB.isCloud())PatronDB.set('patron-progress',{units:state.units,entries:state.entries});}
 function loadPhotos(){try{const r=localStorage.getItem(PHOTOS);return r?JSON.parse(r):[];}catch{return [];}}
-function savePhotos(){try{localStorage.setItem(PHOTOS,JSON.stringify(photos));}catch{}}
+function savePhotos(){try{localStorage.setItem(PHOTOS,JSON.stringify(photos));}catch{} if(window.PatronDB&&PatronDB.isCloud())PatronDB.set('patron-progress-photos',photos);}
 let state=load();
 let photos=loadPhotos();
 const ui={draft:'',editing:false,error:null,photosOpen:false,viewerId:null,compareId:null,confirmDelete:false};
@@ -457,9 +460,20 @@ fileInput.addEventListener('change',e=>{
     if(typeof ev.target.result!=='string')return;
     let c=ev.target.result;try{c=await compress(ev.target.result,1080,.75);}catch(err){}
     const curWeightLabel=latest()?(fmtDisp(latest().weightKg,state.units)+' '+state.units):null;
-    const next={id:'p_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,7),dataUrl:c,dateKey:getLocalDateKey(),weightLabel:curWeightLabel};
+    const id='p_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,7);
+    const next={id,dataUrl:c,dateKey:getLocalDateKey(),weightLabel:curWeightLabel};
+    // Cloud sync on? Upload the image to Supabase Storage and keep only the URL —
+    // this is the fix for photos filling up / never sticking.
+    if(window.PatronDB&&PatronDB.isCloud()){
+      const url=await PatronDB.uploadImage('progress-photos','progress/'+id+'.jpg',c,'image/jpeg');
+      if(url){next.dataUrl=url;next.storagePath='progress/'+id+'.jpg';next.remote=true;}
+    }
     photos=[next].concat(photos);
-    try{savePhotos();}catch(err){try{const sm=await compress(ev.target.result,800,.6);next.dataUrl=sm;savePhotos();}catch(e2){photos=photos.filter(x=>x.id!==next.id);alert('Storage full. Delete older photos first.');}}
+    if(next.remote){savePhotos();}
+    else{ // local-only: keep base64 in this browser (with the storage-full guard)
+      try{localStorage.setItem(PHOTOS,JSON.stringify(photos));}
+      catch(err){try{const sm=await compress(ev.target.result,800,.6);next.dataUrl=sm;localStorage.setItem(PHOTOS,JSON.stringify(photos));}
+      catch(e2){photos=photos.filter(x=>x.id!==next.id);alert('Storage full. Turn on Cloud sync (Settings) so photos upload to the cloud — or delete older photos.');}}}
     render();
   };
   reader.readAsDataURL(file);
@@ -481,13 +495,29 @@ document.addEventListener('click',e=>{
   else if(act==='backCompare'){ui.compareId=null;ui.confirmDelete=false;render();}
   else if(act==='cycleCompare'){const others=photos.filter(p=>p.id!==ui.viewerId);if(others.length){const idx=others.findIndex(p=>p.id===ui.compareId);ui.compareId=others[(idx+1)%others.length].id;render();}}
   else if(act==='compareLatest'){if(photos.length>=2){ui.viewerId=photos[0].id;ui.compareId=photos.find(p=>p.id!==photos[0].id).id;ui.confirmDelete=false;render();}}
-  else if(act==='del'){if(!ui.confirmDelete){ui.confirmDelete=true;render();}else{photos=photos.filter(p=>p.id!==ui.viewerId);savePhotos();ui.viewerId=null;ui.compareId=null;ui.confirmDelete=false;render();}}
+  else if(act==='del'){if(!ui.confirmDelete){ui.confirmDelete=true;render();}else{const victim=photos.find(p=>p.id===ui.viewerId);photos=photos.filter(p=>p.id!==ui.viewerId);if(victim&&victim.storagePath&&window.PatronDB&&PatronDB.deleteImage)PatronDB.deleteImage('progress-photos',victim.storagePath);savePhotos();ui.viewerId=null;ui.compareId=null;ui.confirmDelete=false;render();}}
 });
 document.addEventListener('submit',e=>{const f=e.target.closest('[data-act="saveForm"]');if(f){e.preventDefault();const inp=document.getElementById('wInput');if(inp)ui.draft=inp.value;saveWeight();}});
 document.addEventListener('input',e=>{if(e.target.id==='wInput'){ui.draft=e.target.value;ui.error=null;}});
 document.addEventListener('keydown',e=>{if(e.target.id==='wInput'&&e.key==='Escape'){ui.editing=false;ui.error=null;render();}});
 
 applyTheme(currentTheme);
+
+/* ===================== Cloud hydrate (if Supabase keys are set) =====================
+ * Render locally first (above), then pull cloud copies and re-render. If the cloud
+ * is empty (just connected), seed it with what's already on this device. */
+(async function cloudHydrate(){
+  if(!window.PatronDB||!PatronDB.isCloud())return;
+  try{
+    const cs=await PatronDB.get('patron-progress');
+    if(cs&&Array.isArray(cs.entries)){state={units:cs.units||state.units,entries:cs.entries};try{localStorage.setItem(LS,JSON.stringify(state));}catch{}}
+    else{PatronDB.set('patron-progress',{units:state.units,entries:state.entries});} // seed cloud from this device
+    const cp=await PatronDB.get('patron-progress-photos');
+    if(Array.isArray(cp)){photos=cp;try{localStorage.setItem(PHOTOS,JSON.stringify(photos));}catch{}}
+    else if(photos.length){PatronDB.set('patron-progress-photos',photos);}
+    render();
+  }catch(_){}
+})();
 </script>
 </body>
 </html>
