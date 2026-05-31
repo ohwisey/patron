@@ -187,15 +187,42 @@ window.PatronDB = (function () {
       window.addEventListener('focus', refresh);
     })();
   }
-  if (ready) {
-    // Normalize the page name so it matches PAGE_KEYS whether the URL is "/",
-    // "/finance" (Vercel clean URL) or "/finance.html".
-    let page = (location.pathname.split('/').pop() || '').toLowerCase();
-    if (!page) page = 'index.html';                 // "/" → the hub
-    if (page.indexOf('.') === -1) page += '.html';  // "/finance" → "finance.html"
-    const keys = PAGE_KEYS[page];
-    if (keys && keys.length) _autoSync(keys);
+  // Normalize the page name so it matches PAGE_KEYS whether the URL is "/",
+  // "/finance" (Vercel clean URL) or "/finance.html".
+  let _page = (location.pathname.split('/').pop() || '').toLowerCase();
+  if (!_page) _page = 'index.html';                 // "/" → the hub
+  if (_page.indexOf('.') === -1) _page += '.html';  // "/finance" → "finance.html"
+  const _keys = PAGE_KEYS[_page] || [];
+  if (ready && _keys.length) _autoSync(_keys);
+
+  /* ---- MANUAL sync — explicit, can't-miss buttons (used by cloud-sync.js) ----
+   * pushAll(): force every key on THIS page up to the cloud right now.
+   * pullAll(): force every key on THIS page down from the cloud, then reload. */
+  async function pushAll() {
+    if (!sb) return { ok: false, n: 0 };
+    let n = 0;
+    for (let i = 0; i < _keys.length; i++) {
+      const k = _keys[i], v = localStorage.getItem(k);
+      if (v == null) continue;
+      let val; try { val = JSON.parse(v); } catch (_) { val = v; }
+      try { await sb.from('app_state').upsert({ key: k, data: val, updated_at: new Date().toISOString() }, { onConflict: 'key' }); n++; } catch (_) {}
+    }
+    return { ok: true, n: n };
+  }
+  async function pullAll() {
+    if (!sb) return { ok: false, n: 0 };
+    let n = 0;
+    for (let i = 0; i < _keys.length; i++) {
+      const k = _keys[i];
+      const remote = await _cloudGet(k);
+      if (remote !== undefined && remote !== null) {
+        const rstr = (typeof remote === 'string') ? remote : JSON.stringify(remote);
+        try { localStorage.setItem(k, rstr); n++; } catch (_) {}
+      }
+    }
+    try { sessionStorage.setItem('patron_hydrated_' + location.pathname, '1'); } catch (_) {}
+    return { ok: true, n: n };
   }
 
-  return { isCloud, get, set, subscribe, uploadImage, deleteImage };
+  return { isCloud, get, set, subscribe, uploadImage, deleteImage, pushAll, pullAll, _page, _keys };
 })();
