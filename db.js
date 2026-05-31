@@ -38,12 +38,11 @@ window.PatronDB = (function () {
     ready = !!(u && k && window.supabase && u.indexOf('PASTE-') !== 0);
     sb = ready ? window.supabase.createClient(u, k) : null;
   }
-  // _startSync is a hoisted declaration; it's only ever CALLED after _keys exists
-  // (at the bottom of this IIFE, or inside the async config loader after a fetch).
+  // Starts the universal syncer once we have a live cloud connection. Idempotent.
   function _startSync() {
-    if (_syncStarted || !ready || !_keys || !_keys.length) return;
+    if (_syncStarted || !ready) return;
     _syncStarted = true;
-    _autoSync(_keys);
+    _autoSync();
   }
   _connect(URL, KEY); // synchronous boot — identical behavior to before
 
@@ -122,22 +121,21 @@ window.PatronDB = (function () {
   function _saveLocal(key, v) { try { localStorage.setItem('patron_db_' + key, JSON.stringify(v)); } catch (_) {} }
 
   /* ============================================================
-   * AUTO-SYNC — makes the WHOLE suite sync with no per-page code.
-   * Each page keeps saving to localStorage exactly as before; we just
-   * (a) mirror its registered keys up to the cloud on every save, and
-   * (b) once per session, pull the cloud copy down (reloading only if a
-   * DIFFERENT device's data came in). Cloud off → none of this runs.
-   * Progress + Gym are intentionally absent (they sync themselves).
+   * UNIVERSAL AUTO-SYNC — the same approach the Progress tab uses, applied to
+   * EVERYTHING with no per-page key list. We simply mirror every localStorage
+   * entry to a cloud row of the same name, both directions. No page needs to
+   * register anything; whatever a page saves locally is synced automatically.
+   *
+   * Excluded (never synced): the Supabase keys themselves, db.js's own local
+   * mirror, and per-page session flags — none of those belong on other devices.
    * ============================================================ */
-  const PAGE_KEYS = {
-    'index.html':       ['patron_profile_v1', 'patron_health_v1'],
-    'finance.html':     ['finance_standalone_v1', 'finance_settings_v1'],
-    'supplements.html': ['supplements_standalone_v1', 'supplements_standalone_profile_v1', 'patron_profile_v1', 'patron_health_v1'],
-    'water.html':       ['water_standalone_v1', 'patron_profile_v1'],
-    'creator.html':     ['creator_standalone_v1', 'patron_profile_v1'],
-    'goals.html':       ['goals:*', 'goal_streak_v1', 'patron_health_v1', 'patron_profile_v1'],
-    'whoop.html':       ['whoop_standalone_connected_v1', 'patron_health_v1'],
-  };
+  function _skip(k) {
+    return !k
+      || k.indexOf('po_supabase') === 0      // this device's cloud credentials
+      || k.indexOf('patron_db_') === 0       // db.js get()/set() local fallback mirror
+      || k.indexOf('patron_hydrated_') === 0 // per-session hydrate flag
+      || k === 'patron_theme';               // theme is a per-device preference
+  }
   async function _cloudGet(key) {
     if (!sb) return undefined;
     try { const { data, error } = await sb.from('app_state').select('data').eq('key', key).maybeSingle(); if (!error && data) return data.data; } catch (_) {}
@@ -147,40 +145,27 @@ window.PatronDB = (function () {
     if (!sb) return;
     try { sb.from('app_state').upsert({ key, data: value, updated_at: new Date().toISOString() }, { onConflict: 'key' }); } catch (_) {}
   }
-  // Wildcard support: a configured key ending in '*' means "every key with this
-  // prefix" (goals.html stores each day under goals:YYYY-MM-DD, so we can't list
-  // them ahead of time). _expandLocal → the concrete keys present in THIS browser;
-  // _cloudGetPrefix → every cloud row whose key starts with the prefix.
-  function _expandLocal(keys) {
-    const out = [];
-    for (let i = 0; i < keys.length; i++) {
-      const k = keys[i];
-      if (k.charAt(k.length - 1) === '*') {
-        const pre = k.slice(0, -1);
-        for (let j = 0; j < localStorage.length; j++) { const lk = localStorage.key(j); if (lk && lk.indexOf(pre) === 0) out.push(lk); }
-      } else out.push(k);
-    }
-    return out.filter(function (v, i) { return out.indexOf(v) === i; });
-  }
-  async function _cloudGetPrefix(prefix) {
+  // Every cloud row, as a {key: data} map. One round-trip to reconcile everything.
+  async function _cloudGetAll() {
     const m = {};
     if (!sb) return m;
-    try { const { data, error } = await sb.from('app_state').select('key,data').like('key', prefix + '%'); if (!error && data) data.forEach(function (r) { m[r.key] = r.data; }); } catch (_) {}
+    try { const { data, error } = await sb.from('app_state').select('key,data'); if (!error && data) data.forEach(function (r) { m[r.key] = r.data; }); } catch (_) {}
     return m;
   }
   // Canonicalize a JSON string so key-order differences don't look like edits.
   function _canon(s) { if (s == null) return s; try { return JSON.stringify(JSON.parse(s)); } catch (_) { return s; } }
 
-  function _autoSync(keys) {
+  function _autoSync() {
     const flag = 'patron_hydrated_' + location.pathname;
     const last = {}; // canonical string we believe is synced with cloud, per key
 
-    // Push local edits up. We only push a key whose value differs from the last
-    // value we synced (pushed or pulled), so we never spam the network.
+    // Push every changed local entry up to the cloud. Re-enumerates localStorage
+    // each tick, so keys created later (e.g. a new day's goals) are picked up too.
     function pushChanged() {
-      const cks = _expandLocal(keys);
-      for (let i = 0; i < cks.length; i++) {
-        const k = cks[i], v = localStorage.getItem(k);
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (_skip(k)) continue;
+        const v = localStorage.getItem(k);
         if (v == null) continue;
         const c = _canon(v);
         if (c !== last[k]) {
@@ -191,52 +176,49 @@ window.PatronDB = (function () {
       }
     }
 
-    // Pull cloud → local. Skips any key with unpushed local edits (so we never
-    // clobber what you just changed). Returns true if a local value changed.
+    // Pull every cloud row down. Skips a key that has unpushed local edits (so we
+    // never clobber what you just changed). Seeds the cloud from any local-only
+    // key. Returns true if any local value changed (caller reloads to show it).
     async function pull(seedIfMissing) {
       let changed = false;
-      // Concrete keys to reconcile = local matches + cloud matches. The cloud side
-      // matters for wildcards: a new day's goals created on another device gets
-      // pulled even though this device has never seen that date key.
-      const concrete = {}, cloudCache = {};
-      for (let i = 0; i < keys.length; i++) {
-        const k = keys[i];
-        if (k.charAt(k.length - 1) === '*') {
-          const pre = k.slice(0, -1);
-          for (let j = 0; j < localStorage.length; j++) { const lk = localStorage.key(j); if (lk && lk.indexOf(pre) === 0) concrete[lk] = true; }
-          const m = await _cloudGetPrefix(pre);
-          for (const ck in m) { concrete[ck] = true; cloudCache[ck] = m[ck]; }
-        } else concrete[k] = true;
-      }
-      const cks = Object.keys(concrete);
-      for (let i = 0; i < cks.length; i++) {
-        const k = cks[i];
+      const cloud = await _cloudGetAll();
+      // 1) cloud → local
+      for (const k in cloud) {
+        if (_skip(k)) continue;
         const localStr = localStorage.getItem(k);
         const localCanon = localStr == null ? undefined : _canon(localStr);
         const pendingEdit = (last[k] !== undefined && localCanon !== last[k]);
-        if (pendingEdit) continue; // local has unsynced edits — leave it for pushChanged
-        const remote = (k in cloudCache) ? cloudCache[k] : await _cloudGet(k);
-        if (remote !== undefined && remote !== null) {
-          const rstr = (typeof remote === 'string') ? remote : JSON.stringify(remote);
-          const rcanon = _canon(rstr);
-          if (rcanon !== localCanon) { try { localStorage.setItem(k, rstr); } catch (_) {} changed = true; }
-          last[k] = rcanon;
-        } else if (seedIfMissing && localStr != null) {
+        if (pendingEdit) continue;
+        const remote = cloud[k];
+        if (remote === undefined || remote === null) continue;
+        const rstr = (typeof remote === 'string') ? remote : JSON.stringify(remote);
+        const rcanon = _canon(rstr);
+        if (rcanon !== localCanon) { try { localStorage.setItem(k, rstr); } catch (_) {} changed = true; }
+        last[k] = rcanon;
+      }
+      // 2) seed cloud from any local key it doesn't have yet
+      if (seedIfMissing) {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (_skip(k) || (k in cloud)) continue;
+          const localStr = localStorage.getItem(k);
+          if (localStr == null) continue;
           let val; try { val = JSON.parse(localStr); } catch (_) { val = localStr; }
-          _cloudSet(k, val); // nothing in cloud yet — seed it from this device
-          last[k] = localCanon;
+          _cloudSet(k, val);
+          last[k] = _canon(localStr);
         }
       }
       return changed;
     }
 
     (async function () {
-      // Baseline = whatever is on this device right now, so pull() can tell a
-      // real local edit apart from data we just adopted from the cloud.
-      const _base = _expandLocal(keys);
-      for (let i = 0; i < _base.length; i++) {
-        const ls = localStorage.getItem(_base[i]);
-        last[_base[i]] = ls == null ? undefined : _canon(ls);
+      // Baseline = everything on this device right now, so pull() can tell a real
+      // local edit apart from data we just adopted from the cloud.
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (_skip(k)) continue;
+        const ls = localStorage.getItem(k);
+        last[k] = ls == null ? undefined : _canon(ls);
       }
       try {
         if (!sessionStorage.getItem(flag)) {
@@ -259,23 +241,18 @@ window.PatronDB = (function () {
       window.addEventListener('focus', refresh);
     })();
   }
-  // Normalize the page name so it matches PAGE_KEYS whether the URL is "/",
-  // "/finance" (Vercel clean URL) or "/finance.html".
-  let _page = (location.pathname.split('/').pop() || '').toLowerCase();
-  if (!_page) _page = 'index.html';                 // "/" → the hub
-  if (_page.indexOf('.') === -1) _page += '.html';  // "/finance" → "finance.html"
-  const _keys = PAGE_KEYS[_page] || [];
-  _startSync(); // synchronous case (owner host / pasted keys); async loader covers env-var case
+  _startSync(); // synchronous case (pasted keys); async config loader covers the env-var case
 
   /* ---- MANUAL sync — explicit, can't-miss buttons (used by cloud-sync.js) ----
-   * pushAll(): force every key on THIS page up to the cloud right now.
-   * pullAll(): force every key on THIS page down from the cloud, then reload. */
+   * pushAll(): force every local entry up to the cloud right now.
+   * pullAll(): force every cloud entry down to this device, then reload. */
   async function pushAll() {
     if (!sb) return { ok: false, n: 0 };
     let n = 0;
-    const cks = _expandLocal(_keys);
-    for (let i = 0; i < cks.length; i++) {
-      const k = cks[i], v = localStorage.getItem(k);
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (_skip(k)) continue;
+      const v = localStorage.getItem(k);
       if (v == null) continue;
       let val; try { val = JSON.parse(v); } catch (_) { val = v; }
       try { await sb.from('app_state').upsert({ key: k, data: val, updated_at: new Date().toISOString() }, { onConflict: 'key' }); n++; } catch (_) {}
@@ -285,26 +262,17 @@ window.PatronDB = (function () {
   async function pullAll() {
     if (!sb) return { ok: false, n: 0 };
     let n = 0;
-    const concrete = {}, cloudCache = {};
-    for (let i = 0; i < _keys.length; i++) {
-      const k = _keys[i];
-      if (k.charAt(k.length - 1) === '*') {
-        const m = await _cloudGetPrefix(k.slice(0, -1));
-        for (const ck in m) { concrete[ck] = true; cloudCache[ck] = m[ck]; }
-      } else concrete[k] = true;
-    }
-    const cks = Object.keys(concrete);
-    for (let i = 0; i < cks.length; i++) {
-      const k = cks[i];
-      const remote = (k in cloudCache) ? cloudCache[k] : await _cloudGet(k);
-      if (remote !== undefined && remote !== null) {
-        const rstr = (typeof remote === 'string') ? remote : JSON.stringify(remote);
-        try { localStorage.setItem(k, rstr); n++; } catch (_) {}
-      }
+    const cloud = await _cloudGetAll();
+    for (const k in cloud) {
+      if (_skip(k)) continue;
+      const remote = cloud[k];
+      if (remote === undefined || remote === null) continue;
+      const rstr = (typeof remote === 'string') ? remote : JSON.stringify(remote);
+      try { localStorage.setItem(k, rstr); n++; } catch (_) {}
     }
     try { sessionStorage.setItem('patron_hydrated_' + location.pathname, '1'); } catch (_) {}
     return { ok: true, n: n };
   }
 
-  return { isCloud, cfgUrl, cfgKey, get, set, subscribe, uploadImage, deleteImage, pushAll, pullAll, _page, _keys };
+  return { isCloud, cfgUrl, cfgKey, get, set, subscribe, uploadImage, deleteImage, pushAll, pullAll };
 })();
