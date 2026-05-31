@@ -110,16 +110,16 @@ window.PatronDB = (function () {
   }
   function _autoSync(keys) {
     const flag = 'patron_hydrated_' + location.pathname;
-    function writeThrough() {
-      const orig = localStorage.setItem.bind(localStorage);
-      const timers = {};
-      localStorage.setItem = function (k, v) {
-        orig(k, v);
-        if (keys.indexOf(k) !== -1) {
-          clearTimeout(timers[k]);
-          timers[k] = setTimeout(function () { let val; try { val = JSON.parse(v); } catch (_) { val = v; } _cloudSet(k, val); }, 700);
+    const last = {}; // last value seen per key, so we only push real changes
+    function pushChanged() {
+      for (let i = 0; i < keys.length; i++) {
+        const k = keys[i], v = localStorage.getItem(k);
+        if (v != null && v !== last[k]) {
+          last[k] = v;
+          let val; try { val = JSON.parse(v); } catch (_) { val = v; }
+          _cloudSet(k, val);
         }
-      };
+      }
     }
     (async function () {
       try {
@@ -130,16 +130,20 @@ window.PatronDB = (function () {
             if (remote !== undefined && remote !== null) {
               const rstr = (typeof remote === 'string') ? remote : JSON.stringify(remote);
               if (localStorage.getItem(k) !== rstr) { try { localStorage.setItem(k, rstr); } catch (_) {} changed = true; }
+              last[k] = rstr; // already in cloud — don't re-push
             } else {
               const local = localStorage.getItem(k);
-              if (local != null) { let val; try { val = JSON.parse(local); } catch (_) { val = local; } _cloudSet(k, val); } // seed cloud from this device
+              if (local != null) { last[k] = local; let val; try { val = JSON.parse(local); } catch (_) { val = local; } _cloudSet(k, val); } // seed cloud from this device
             }
           }
           sessionStorage.setItem(flag, '1');
           if (changed) { location.reload(); return; } // a different device's data arrived → show it
+        } else {
+          for (let i = 0; i < keys.length; i++) last[keys[i]] = localStorage.getItem(keys[i]); // baseline: only push future edits
         }
       } catch (_) {}
-      writeThrough();
+      // Poll for saves instead of overriding localStorage.setItem (which Safari blocks).
+      setInterval(pushChanged, 2000);
     })();
   }
   if (ready) {
