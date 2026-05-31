@@ -108,47 +108,87 @@ window.PatronDB = (function () {
     if (!sb) return;
     try { sb.from('app_state').upsert({ key, data: value, updated_at: new Date().toISOString() }, { onConflict: 'key' }); } catch (_) {}
   }
+  // Canonicalize a JSON string so key-order differences don't look like edits.
+  function _canon(s) { if (s == null) return s; try { return JSON.stringify(JSON.parse(s)); } catch (_) { return s; } }
+
   function _autoSync(keys) {
     const flag = 'patron_hydrated_' + location.pathname;
-    const last = {}; // last value seen per key, so we only push real changes
+    const last = {}; // canonical string we believe is synced with cloud, per key
+
+    // Push local edits up. We only push a key whose value differs from the last
+    // value we synced (pushed or pulled), so we never spam the network.
     function pushChanged() {
       for (let i = 0; i < keys.length; i++) {
         const k = keys[i], v = localStorage.getItem(k);
-        if (v != null && v !== last[k]) {
-          last[k] = v;
+        if (v == null) continue;
+        const c = _canon(v);
+        if (c !== last[k]) {
+          last[k] = c;
           let val; try { val = JSON.parse(v); } catch (_) { val = v; }
           _cloudSet(k, val);
         }
       }
     }
+
+    // Pull cloud → local. Skips any key with unpushed local edits (so we never
+    // clobber what you just changed). Returns true if a local value changed.
+    async function pull(seedIfMissing) {
+      let changed = false;
+      for (let i = 0; i < keys.length; i++) {
+        const k = keys[i];
+        const localStr = localStorage.getItem(k);
+        const localCanon = localStr == null ? undefined : _canon(localStr);
+        const pendingEdit = (last[k] !== undefined && localCanon !== last[k]);
+        if (pendingEdit) continue; // local has unsynced edits — leave it for pushChanged
+        const remote = await _cloudGet(k);
+        if (remote !== undefined && remote !== null) {
+          const rstr = (typeof remote === 'string') ? remote : JSON.stringify(remote);
+          const rcanon = _canon(rstr);
+          if (rcanon !== localCanon) { try { localStorage.setItem(k, rstr); } catch (_) {} changed = true; }
+          last[k] = rcanon;
+        } else if (seedIfMissing && localStr != null) {
+          let val; try { val = JSON.parse(localStr); } catch (_) { val = localStr; }
+          _cloudSet(k, val); // nothing in cloud yet — seed it from this device
+          last[k] = localCanon;
+        }
+      }
+      return changed;
+    }
+
     (async function () {
+      // Baseline = whatever is on this device right now, so pull() can tell a
+      // real local edit apart from data we just adopted from the cloud.
+      for (let i = 0; i < keys.length; i++) {
+        const ls = localStorage.getItem(keys[i]);
+        last[keys[i]] = ls == null ? undefined : _canon(ls);
+      }
       try {
         if (!sessionStorage.getItem(flag)) {
-          let changed = false;
-          for (let i = 0; i < keys.length; i++) {
-            const k = keys[i], remote = await _cloudGet(k);
-            if (remote !== undefined && remote !== null) {
-              const rstr = (typeof remote === 'string') ? remote : JSON.stringify(remote);
-              if (localStorage.getItem(k) !== rstr) { try { localStorage.setItem(k, rstr); } catch (_) {} changed = true; }
-              last[k] = rstr; // already in cloud — don't re-push
-            } else {
-              const local = localStorage.getItem(k);
-              if (local != null) { last[k] = local; let val; try { val = JSON.parse(local); } catch (_) { val = local; } _cloudSet(k, val); } // seed cloud from this device
-            }
-          }
+          const changed = await pull(true); // first load this session: cloud wins, seed if empty
           sessionStorage.setItem(flag, '1');
           if (changed) { location.reload(); return; } // a different device's data arrived → show it
-        } else {
-          for (let i = 0; i < keys.length; i++) last[keys[i]] = localStorage.getItem(keys[i]); // baseline: only push future edits
         }
       } catch (_) {}
       // Poll for saves instead of overriding localStorage.setItem (which Safari blocks).
       setInterval(pushChanged, 2000);
+      // When you switch back to this tab/device, grab any edits made elsewhere.
+      let pulling = false;
+      async function refresh() {
+        if (pulling || document.hidden) return;
+        pulling = true;
+        try { pushChanged(); if (await pull(false)) location.reload(); } catch (_) {}
+        pulling = false;
+      }
+      document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
+      window.addEventListener('focus', refresh);
     })();
   }
   if (ready) {
-    let page = (location.pathname.split('/').pop() || 'index.html').toLowerCase();
-    if (!page) page = 'index.html';
+    // Normalize the page name so it matches PAGE_KEYS whether the URL is "/",
+    // "/finance" (Vercel clean URL) or "/finance.html".
+    let page = (location.pathname.split('/').pop() || '').toLowerCase();
+    if (!page) page = 'index.html';                 // "/" → the hub
+    if (page.indexOf('.') === -1) page += '.html';  // "/finance" → "finance.html"
     const keys = PAGE_KEYS[page];
     if (keys && keys.length) _autoSync(keys);
   }
