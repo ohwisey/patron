@@ -1,7 +1,7 @@
 # 📋 Copy-paste — everything for the video
 
 Grab-and-go snippets, in the order the video uses them.
-> Replace **`patrontest.vercel.app`** with your real Vercel URL if it's different.
+> Replace **`patron1-chi.vercel.app`** with your real Vercel URL if it's different.
 
 ---
 
@@ -65,8 +65,8 @@ YOUTUBE_API_KEY
 **Redirect / callback URLs** (paste these into the Whoop/Fitbit developer app settings):
 
 ```
-https://patrontest.vercel.app/api/whoop/callback
-https://patrontest.vercel.app/api/fitbit/callback
+https://patron1-chi.vercel.app/api/whoop/callback
+https://patron1-chi.vercel.app/api/fitbit/callback
 ```
 
 After adding keys → hit **Redeploy** in Vercel.
