@@ -135,7 +135,7 @@ window.PatronDB = (function () {
     'supplements.html': ['supplements_standalone_v1', 'supplements_standalone_profile_v1', 'patron_profile_v1', 'patron_health_v1'],
     'water.html':       ['water_standalone_v1', 'patron_profile_v1'],
     'creator.html':     ['creator_standalone_v1', 'patron_profile_v1'],
-    'goals.html':       ['goals:tasks', 'goals:plan', 'goals:streak', 'goals:settings', 'goals:profile', 'goals:dayWindow', 'patron_health_v1', 'patron_profile_v1'],
+    'goals.html':       ['goals:*', 'goal_streak_v1', 'patron_health_v1', 'patron_profile_v1'],
     'whoop.html':       ['whoop_standalone_connected_v1', 'patron_health_v1'],
   };
   async function _cloudGet(key) {
@@ -147,6 +147,27 @@ window.PatronDB = (function () {
     if (!sb) return;
     try { sb.from('app_state').upsert({ key, data: value, updated_at: new Date().toISOString() }, { onConflict: 'key' }); } catch (_) {}
   }
+  // Wildcard support: a configured key ending in '*' means "every key with this
+  // prefix" (goals.html stores each day under goals:YYYY-MM-DD, so we can't list
+  // them ahead of time). _expandLocal → the concrete keys present in THIS browser;
+  // _cloudGetPrefix → every cloud row whose key starts with the prefix.
+  function _expandLocal(keys) {
+    const out = [];
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      if (k.charAt(k.length - 1) === '*') {
+        const pre = k.slice(0, -1);
+        for (let j = 0; j < localStorage.length; j++) { const lk = localStorage.key(j); if (lk && lk.indexOf(pre) === 0) out.push(lk); }
+      } else out.push(k);
+    }
+    return out.filter(function (v, i) { return out.indexOf(v) === i; });
+  }
+  async function _cloudGetPrefix(prefix) {
+    const m = {};
+    if (!sb) return m;
+    try { const { data, error } = await sb.from('app_state').select('key,data').like('key', prefix + '%'); if (!error && data) data.forEach(function (r) { m[r.key] = r.data; }); } catch (_) {}
+    return m;
+  }
   // Canonicalize a JSON string so key-order differences don't look like edits.
   function _canon(s) { if (s == null) return s; try { return JSON.stringify(JSON.parse(s)); } catch (_) { return s; } }
 
@@ -157,8 +178,9 @@ window.PatronDB = (function () {
     // Push local edits up. We only push a key whose value differs from the last
     // value we synced (pushed or pulled), so we never spam the network.
     function pushChanged() {
-      for (let i = 0; i < keys.length; i++) {
-        const k = keys[i], v = localStorage.getItem(k);
+      const cks = _expandLocal(keys);
+      for (let i = 0; i < cks.length; i++) {
+        const k = cks[i], v = localStorage.getItem(k);
         if (v == null) continue;
         const c = _canon(v);
         if (c !== last[k]) {
@@ -173,13 +195,27 @@ window.PatronDB = (function () {
     // clobber what you just changed). Returns true if a local value changed.
     async function pull(seedIfMissing) {
       let changed = false;
+      // Concrete keys to reconcile = local matches + cloud matches. The cloud side
+      // matters for wildcards: a new day's goals created on another device gets
+      // pulled even though this device has never seen that date key.
+      const concrete = {}, cloudCache = {};
       for (let i = 0; i < keys.length; i++) {
         const k = keys[i];
+        if (k.charAt(k.length - 1) === '*') {
+          const pre = k.slice(0, -1);
+          for (let j = 0; j < localStorage.length; j++) { const lk = localStorage.key(j); if (lk && lk.indexOf(pre) === 0) concrete[lk] = true; }
+          const m = await _cloudGetPrefix(pre);
+          for (const ck in m) { concrete[ck] = true; cloudCache[ck] = m[ck]; }
+        } else concrete[k] = true;
+      }
+      const cks = Object.keys(concrete);
+      for (let i = 0; i < cks.length; i++) {
+        const k = cks[i];
         const localStr = localStorage.getItem(k);
         const localCanon = localStr == null ? undefined : _canon(localStr);
         const pendingEdit = (last[k] !== undefined && localCanon !== last[k]);
         if (pendingEdit) continue; // local has unsynced edits — leave it for pushChanged
-        const remote = await _cloudGet(k);
+        const remote = (k in cloudCache) ? cloudCache[k] : await _cloudGet(k);
         if (remote !== undefined && remote !== null) {
           const rstr = (typeof remote === 'string') ? remote : JSON.stringify(remote);
           const rcanon = _canon(rstr);
@@ -197,9 +233,10 @@ window.PatronDB = (function () {
     (async function () {
       // Baseline = whatever is on this device right now, so pull() can tell a
       // real local edit apart from data we just adopted from the cloud.
-      for (let i = 0; i < keys.length; i++) {
-        const ls = localStorage.getItem(keys[i]);
-        last[keys[i]] = ls == null ? undefined : _canon(ls);
+      const _base = _expandLocal(keys);
+      for (let i = 0; i < _base.length; i++) {
+        const ls = localStorage.getItem(_base[i]);
+        last[_base[i]] = ls == null ? undefined : _canon(ls);
       }
       try {
         if (!sessionStorage.getItem(flag)) {
@@ -236,8 +273,9 @@ window.PatronDB = (function () {
   async function pushAll() {
     if (!sb) return { ok: false, n: 0 };
     let n = 0;
-    for (let i = 0; i < _keys.length; i++) {
-      const k = _keys[i], v = localStorage.getItem(k);
+    const cks = _expandLocal(_keys);
+    for (let i = 0; i < cks.length; i++) {
+      const k = cks[i], v = localStorage.getItem(k);
       if (v == null) continue;
       let val; try { val = JSON.parse(v); } catch (_) { val = v; }
       try { await sb.from('app_state').upsert({ key: k, data: val, updated_at: new Date().toISOString() }, { onConflict: 'key' }); n++; } catch (_) {}
@@ -247,9 +285,18 @@ window.PatronDB = (function () {
   async function pullAll() {
     if (!sb) return { ok: false, n: 0 };
     let n = 0;
+    const concrete = {}, cloudCache = {};
     for (let i = 0; i < _keys.length; i++) {
       const k = _keys[i];
-      const remote = await _cloudGet(k);
+      if (k.charAt(k.length - 1) === '*') {
+        const m = await _cloudGetPrefix(k.slice(0, -1));
+        for (const ck in m) { concrete[ck] = true; cloudCache[ck] = m[ck]; }
+      } else concrete[k] = true;
+    }
+    const cks = Object.keys(concrete);
+    for (let i = 0; i < cks.length; i++) {
+      const k = cks[i];
+      const remote = (k in cloudCache) ? cloudCache[k] : await _cloudGet(k);
       if (remote !== undefined && remote !== null) {
         const rstr = (typeof remote === 'string') ? remote : JSON.stringify(remote);
         try { localStorage.setItem(k, rstr); n++; } catch (_) {}
