@@ -82,5 +82,72 @@ window.PatronDB = (function () {
   function _local(key) { try { return JSON.parse(localStorage.getItem('patron_db_' + key) || 'null'); } catch (_) { return null; } }
   function _saveLocal(key, v) { try { localStorage.setItem('patron_db_' + key, JSON.stringify(v)); } catch (_) {} }
 
+  /* ============================================================
+   * AUTO-SYNC — makes the WHOLE suite sync with no per-page code.
+   * Each page keeps saving to localStorage exactly as before; we just
+   * (a) mirror its registered keys up to the cloud on every save, and
+   * (b) once per session, pull the cloud copy down (reloading only if a
+   * DIFFERENT device's data came in). Cloud off → none of this runs.
+   * Progress + Gym are intentionally absent (they sync themselves).
+   * ============================================================ */
+  const PAGE_KEYS = {
+    'index.html':       ['patron_profile_v1', 'patron_health_v1'],
+    'finance.html':     ['finance_standalone_v1', 'finance_settings_v1'],
+    'supplements.html': ['supplements_standalone_v1', 'supplements_standalone_profile_v1', 'patron_profile_v1', 'patron_health_v1'],
+    'water.html':       ['water_standalone_v1', 'patron_profile_v1'],
+    'creator.html':     ['creator_standalone_v1', 'patron_profile_v1'],
+    'goals.html':       ['goal_streak_v1', 'goals:dayWindow', 'patron_health_v1', 'patron_profile_v1'],
+    'whoop.html':       ['whoop_standalone_connected_v1'],
+  };
+  async function _cloudGet(key) {
+    if (!sb) return undefined;
+    try { const { data, error } = await sb.from('app_state').select('data').eq('key', key).maybeSingle(); if (!error && data) return data.data; } catch (_) {}
+    return undefined;
+  }
+  function _cloudSet(key, value) {
+    if (!sb) return;
+    try { sb.from('app_state').upsert({ key, data: value, updated_at: new Date().toISOString() }, { onConflict: 'key' }); } catch (_) {}
+  }
+  function _autoSync(keys) {
+    const flag = 'patron_hydrated_' + location.pathname;
+    function writeThrough() {
+      const orig = localStorage.setItem.bind(localStorage);
+      const timers = {};
+      localStorage.setItem = function (k, v) {
+        orig(k, v);
+        if (keys.indexOf(k) !== -1) {
+          clearTimeout(timers[k]);
+          timers[k] = setTimeout(function () { let val; try { val = JSON.parse(v); } catch (_) { val = v; } _cloudSet(k, val); }, 700);
+        }
+      };
+    }
+    (async function () {
+      try {
+        if (!sessionStorage.getItem(flag)) {
+          let changed = false;
+          for (let i = 0; i < keys.length; i++) {
+            const k = keys[i], remote = await _cloudGet(k);
+            if (remote !== undefined && remote !== null) {
+              const rstr = (typeof remote === 'string') ? remote : JSON.stringify(remote);
+              if (localStorage.getItem(k) !== rstr) { try { localStorage.setItem(k, rstr); } catch (_) {} changed = true; }
+            } else {
+              const local = localStorage.getItem(k);
+              if (local != null) { let val; try { val = JSON.parse(local); } catch (_) { val = local; } _cloudSet(k, val); } // seed cloud from this device
+            }
+          }
+          sessionStorage.setItem(flag, '1');
+          if (changed) { location.reload(); return; } // a different device's data arrived → show it
+        }
+      } catch (_) {}
+      writeThrough();
+    })();
+  }
+  if (ready) {
+    let page = (location.pathname.split('/').pop() || 'index.html').toLowerCase();
+    if (!page) page = 'index.html';
+    const keys = PAGE_KEYS[page];
+    if (keys && keys.length) _autoSync(keys);
+  }
+
   return { isCloud, get, set, subscribe, uploadImage, deleteImage };
 })();

@@ -45,7 +45,9 @@
   function paint() { btn.textContent = connected() ? '☁ Synced' : '☁ Cloud sync'; btn.setAttribute('data-on', connected() ? '1' : '0'); }
   paint();
   btn.addEventListener('click', openPanel);
-  document.body.appendChild(btn);
+  // Mount once <body> exists (so this include can sit in <head> or <body>).
+  if (document.body) document.body.appendChild(btn);
+  else document.addEventListener('DOMContentLoaded', function () { document.body.appendChild(btn); });
 
   function openPanel() {
     var ov = document.createElement('div');
