@@ -135,8 +135,8 @@ window.PatronDB = (function () {
     'supplements.html': ['supplements_standalone_v1', 'supplements_standalone_profile_v1', 'patron_profile_v1', 'patron_health_v1'],
     'water.html':       ['water_standalone_v1', 'patron_profile_v1'],
     'creator.html':     ['creator_standalone_v1', 'patron_profile_v1'],
-    'goals.html':       ['goals:tasks', 'goals:planTomorrow', 'goals:streak', 'goals:profile', 'goals:dayWindow', 'patron_health_v1', 'patron_profile_v1'],
-    'whoop.html':       ['whoop_standalone_connected_v1', 'patron_whoop_data_v1', 'patron_health_v1'],
+    'goals.html':       ['goals:tasks', 'goals:plan', 'goals:streak', 'goals:settings', 'goals:profile', 'goals:dayWindow', 'patron_health_v1', 'patron_profile_v1'],
+    'whoop.html':       ['whoop_standalone_connected_v1', 'patron_health_v1'],
   };
   async function _cloudGet(key) {
     if (!sb) return undefined;
