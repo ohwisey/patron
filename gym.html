@@ -3427,11 +3427,10 @@ img, video, canvas, svg { max-width: 100%; }
   // If you leave the placeholders unchanged the app still works,
   // just only on this device (data stays in your browser).
   // ============================================================
-  // Baked-in Supabase default that activates ONLY on my own deploy; forkers add
-  // their own keys via Settings → Cloud sync. Override always wins via localStorage.
-  const _ownerHost = ['patron1-chi.vercel.app','localhost','127.0.0.1'].indexOf(location.hostname) !== -1;
-  const SUPABASE_URL = ((localStorage.getItem('po_supabase_url') || '').trim()) || (_ownerHost ? 'https://kvpaqyyjrkprgneskbix.supabase.co' : '');
-  const SUPABASE_KEY = ((localStorage.getItem('po_supabase_key') || '').trim()) || (_ownerHost ? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt2cGFxeXlqcmtwcmduZXNrYml4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyMzM1NzcsImV4cCI6MjA5NTgwOTU3N30.N11yr5mSKwLE0obPPv6I7iDqz67RXM595mtdpF0vpe8' : '');
+  // Supabase keys come from localStorage (pasted in Settings) or, if blank, from
+  // PatronDB which loads them from /api/config (Vercel env vars). No keys in code.
+  const SUPABASE_URL = ((localStorage.getItem('po_supabase_url') || '').trim()) || ((window.PatronDB && PatronDB.cfgUrl && PatronDB.cfgUrl()) || '');
+  const SUPABASE_KEY = ((localStorage.getItem('po_supabase_key') || '').trim()) || ((window.PatronDB && PatronDB.cfgKey && PatronDB.cfgKey()) || '');
   const APP_KEY = 'po-coach';
   // Note: po_coach_photos IS synced, but only URL-pointer entries ride
   // the wire. The actual JPEG lives in Supabase Storage. pcCollectState

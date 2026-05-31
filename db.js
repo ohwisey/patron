@@ -19,20 +19,51 @@
  * (Gym → ⚙ Settings → Cloud sync).
  * ============================================================ */
 window.PatronDB = (function () {
-  // Baked-in defaults so MY OWN devices auto-connect with zero setup. These only
-  // activate on my own deploy (OWNER_HOSTS) — anyone who forks this repo and
-  // deploys to their own domain gets a blank slate and adds their own Supabase
-  // keys via the ☁ Cloud sync button (or sets them on window before db.js loads).
-  const OWNER_HOSTS = ['patron1-chi.vercel.app', 'localhost', '127.0.0.1'];
-  const _isOwner = OWNER_HOSTS.indexOf(location.hostname) !== -1;
-  const DEFAULT_URL = _isOwner ? 'https://kvpaqyyjrkprgneskbix.supabase.co' : '';
-  const DEFAULT_KEY = _isOwner ? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt2cGFxeXlqcmtwcmduZXNrYml4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyMzM1NzcsImV4cCI6MjA5NTgwOTU3N30.N11yr5mSKwLE0obPPv6I7iDqz67RXM595mtdpF0vpe8' : '';
-  const URL = ((localStorage.getItem('po_supabase_url') || '').trim()) || DEFAULT_URL;
-  const KEY = ((localStorage.getItem('po_supabase_key') || '').trim()) || DEFAULT_KEY;
-  const ready = !!(URL && KEY && window.supabase && URL.indexOf('PASTE-') !== 0);
-  const sb = ready ? window.supabase.createClient(URL, KEY) : null;
+  // Key resolution order (first non-empty wins):
+  //   1. localStorage override (user pasted their own keys via ☁ panel)
+  //   2. /api/config         (this deploy's Vercel env vars — keys live there,
+  //                           NOT in this repo, so nothing is committed publicly)
+  // No keys are hardcoded here. A fresh deploy with no env vars set stays
+  // local-only until the user adds keys (env var or the ☁ panel).
+  const _ovUrl = (localStorage.getItem('po_supabase_url') || '').trim();
+  const _ovKey = (localStorage.getItem('po_supabase_key') || '').trim();
+
+  let URL = _ovUrl;
+  let KEY = _ovKey;
+  let ready = false;
+  let sb = null;
+  let _syncStarted = false;
+
+  function _connect(u, k) {
+    ready = !!(u && k && window.supabase && u.indexOf('PASTE-') !== 0);
+    sb = ready ? window.supabase.createClient(u, k) : null;
+  }
+  // _startSync is a hoisted declaration; it's only ever CALLED after _keys exists
+  // (at the bottom of this IIFE, or inside the async config loader after a fetch).
+  function _startSync() {
+    if (_syncStarted || !ready || !_keys || !_keys.length) return;
+    _syncStarted = true;
+    _autoSync(_keys);
+  }
+  _connect(URL, KEY); // synchronous boot — identical behavior to before
+
+  // If the user hasn't pasted their own keys, fetch this deploy's config from the
+  // server (Vercel env vars) and connect. Forkers with no env vars set get
+  // {url:'',key:''} → app stays local-only until they add their own keys.
+  (async function _loadConfig() {
+    if (_ovUrl && _ovKey) return; // user override already wins
+    try {
+      const r = await fetch('/api/config', { cache: 'no-store' });
+      if (!r.ok) return;
+      const cfg = await r.json();
+      const u = (cfg && cfg.url || '').trim(), k = (cfg && cfg.key || '').trim();
+      if (u && k && (u !== URL || k !== KEY)) { URL = u; KEY = k; _connect(u, k); _startSync(); }
+    } catch (_) {}
+  })();
 
   function isCloud() { return ready; }
+  function cfgUrl() { return URL || ''; }
+  function cfgKey() { return KEY || ''; }
 
   /* ---- read a blob by key (cloud if configured, else this browser) ---- */
   async function get(key) {
@@ -197,7 +228,7 @@ window.PatronDB = (function () {
   if (!_page) _page = 'index.html';                 // "/" → the hub
   if (_page.indexOf('.') === -1) _page += '.html';  // "/finance" → "finance.html"
   const _keys = PAGE_KEYS[_page] || [];
-  if (ready && _keys.length) _autoSync(_keys);
+  _startSync(); // synchronous case (owner host / pasted keys); async loader covers env-var case
 
   /* ---- MANUAL sync — explicit, can't-miss buttons (used by cloud-sync.js) ----
    * pushAll(): force every key on THIS page up to the cloud right now.
@@ -228,5 +259,5 @@ window.PatronDB = (function () {
     return { ok: true, n: n };
   }
 
-  return { isCloud, get, set, subscribe, uploadImage, deleteImage, pushAll, pullAll, _page, _keys };
+  return { isCloud, cfgUrl, cfgKey, get, set, subscribe, uploadImage, deleteImage, pushAll, pullAll, _page, _keys };
 })();
