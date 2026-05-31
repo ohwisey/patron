@@ -19,10 +19,14 @@
  * (Gym → ⚙ Settings → Cloud sync).
  * ============================================================ */
 window.PatronDB = (function () {
-  // Baked-in defaults so every device auto-connects with zero setup. A user can
-  // still override these via the ☁ Cloud sync button (saved to localStorage).
-  const DEFAULT_URL = 'https://kvpaqyyjrkprgneskbix.supabase.co';
-  const DEFAULT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt2cGFxeXlqcmtwcmduZXNrYml4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyMzM1NzcsImV4cCI6MjA5NTgwOTU3N30.N11yr5mSKwLE0obPPv6I7iDqz67RXM595mtdpF0vpe8';
+  // Baked-in defaults so MY OWN devices auto-connect with zero setup. These only
+  // activate on my own deploy (OWNER_HOSTS) — anyone who forks this repo and
+  // deploys to their own domain gets a blank slate and adds their own Supabase
+  // keys via the ☁ Cloud sync button (or sets them on window before db.js loads).
+  const OWNER_HOSTS = ['patron1-chi.vercel.app', 'localhost', '127.0.0.1'];
+  const _isOwner = OWNER_HOSTS.indexOf(location.hostname) !== -1;
+  const DEFAULT_URL = _isOwner ? 'https://kvpaqyyjrkprgneskbix.supabase.co' : '';
+  const DEFAULT_KEY = _isOwner ? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt2cGFxeXlqcmtwcmduZXNrYml4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyMzM1NzcsImV4cCI6MjA5NTgwOTU3N30.N11yr5mSKwLE0obPPv6I7iDqz67RXM595mtdpF0vpe8' : '';
   const URL = ((localStorage.getItem('po_supabase_url') || '').trim()) || DEFAULT_URL;
   const KEY = ((localStorage.getItem('po_supabase_key') || '').trim()) || DEFAULT_KEY;
   const ready = !!(URL && KEY && window.supabase && URL.indexOf('PASTE-') !== 0);
