@@ -229,7 +229,9 @@ window.PatronDB = (function () {
       } catch (_) {}
       // Poll for saves instead of overriding localStorage.setItem (which Safari blocks).
       setInterval(pushChanged, 2000);
-      // When you switch back to this tab/device, grab any edits made elsewhere.
+      // Continuously pull other devices' edits on their own — no buttons needed.
+      // Runs every 5s while the tab is visible; also fires the instant you switch
+      // back to the tab. If a remote change lands, we reload to show it.
       let pulling = false;
       async function refresh() {
         if (pulling || document.hidden) return;
@@ -237,6 +239,7 @@ window.PatronDB = (function () {
         try { pushChanged(); if (await pull(false)) location.reload(); } catch (_) {}
         pulling = false;
       }
+      setInterval(refresh, 5000);
       document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
       window.addEventListener('focus', refresh);
     })();
