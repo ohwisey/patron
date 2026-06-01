@@ -227,19 +227,21 @@ window.PatronDB = (function () {
           if (changed) { location.reload(); return; } // a different device's data arrived → show it
         }
       } catch (_) {}
-      // Poll for saves instead of overriding localStorage.setItem (which Safari blocks).
+      // Keep pushing your saves up continuously (non-disruptive — no reload).
       setInterval(pushChanged, 2000);
-      // Continuously pull other devices' edits on their own — no buttons needed.
-      // Runs every 5s while the tab is visible; also fires the instant you switch
-      // back to the tab. If a remote change lands, we reload to show it.
+      // Pull other devices' edits ONLY when you return to this tab/device — never
+      // on a timer, so it can never reload while you're typing. Switching from PC
+      // to phone (or back) triggers one pull; that's when you want fresh data.
       let pulling = false;
       async function refresh() {
         if (pulling || document.hidden) return;
         pulling = true;
-        try { pushChanged(); if (await pull(false)) location.reload(); } catch (_) {}
+        try {
+          pushChanged();                 // flush anything you just typed up first
+          if (await pull(false)) location.reload(); // adopt remote edits, then show them
+        } catch (_) {}
         pulling = false;
       }
-      setInterval(refresh, 5000);
       document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
       window.addEventListener('focus', refresh);
     })();
