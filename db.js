@@ -159,6 +159,12 @@ window.PatronDB = (function () {
     const flag = 'patron_hydrated_' + location.pathname;
     const last = {}; // canonical string we believe is synced with cloud, per key
 
+    // One-time guard so the first-load reload can NEVER loop, even if pull() keeps
+    // reporting a change. Lives in sessionStorage (per tab/session).
+    const reloadFlag = 'patron_initreload_' + location.pathname;
+    function _didInitialReload() { try { return !!sessionStorage.getItem(reloadFlag); } catch (_) { return true; } }
+    function _markInitialReload() { try { sessionStorage.setItem(reloadFlag, '1'); } catch (_) {} }
+
     // Push every changed local entry up to the cloud. Re-enumerates localStorage
     // each tick, so keys created later (e.g. a new day's goals) are picked up too.
     function pushChanged() {
@@ -220,26 +226,26 @@ window.PatronDB = (function () {
         const ls = localStorage.getItem(k);
         last[k] = ls == null ? undefined : _canon(ls);
       }
+      // FIRST LOAD ONLY: adopt the cloud copy before the page renders, then let
+      // it render once. This reload happens before you've interacted, so it can't
+      // eat anything. Guarded by a per-session flag so it runs at most once.
       try {
         if (!sessionStorage.getItem(flag)) {
-          const changed = await pull(true); // first load this session: cloud wins, seed if empty
+          const changed = await pull(true); // cloud wins on fresh load; seed if empty
           sessionStorage.setItem(flag, '1');
-          if (changed) { location.reload(); return; } // a different device's data arrived → show it
+          if (changed && !_didInitialReload()) { _markInitialReload(); location.reload(); return; }
         }
       } catch (_) {}
-      // Keep pushing your saves up continuously (non-disruptive — no reload).
+      // Keep pushing your saves up continuously. NEVER reloads — so typing is safe.
       setInterval(pushChanged, 2000);
-      // Pull other devices' edits ONLY when you return to this tab/device — never
-      // on a timer, so it can never reload while you're typing. Switching from PC
-      // to phone (or back) triggers one pull; that's when you want fresh data.
+      // Pull other devices' edits when you return to this tab. We update
+      // localStorage SILENTLY and do NOT reload (reloading mid-use was wiping
+      // in-progress typing). Always flush your own edits up first so they win.
       let pulling = false;
       async function refresh() {
         if (pulling || document.hidden) return;
         pulling = true;
-        try {
-          pushChanged();                 // flush anything you just typed up first
-          if (await pull(false)) location.reload(); // adopt remote edits, then show them
-        } catch (_) {}
+        try { pushChanged(); await pull(false); } catch (_) {}
         pulling = false;
       }
       document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
